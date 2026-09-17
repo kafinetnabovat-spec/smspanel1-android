@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
     }
     data class Msg(val id:Int,val to:String,val body:String)
     fun fetchQueue(limit:Int): List<Msg> {
-        val url = URL("$siteUrl/wp-json/smsp1/v1/queue/fetch")
+        val url = URL("$siteUrl/index.php?rest_route=/smsp1/v1/queue/fetch")
         val c = (url.openConnection() as HttpURLConnection).apply {
             requestMethod="POST"; doOutput=true; setRequestProperty("Content-Type","application/json") }
         c.outputStream.write(JSONObject().put("user_id",userId).put("limit",limit).toString().toByteArray())
@@ -79,7 +79,7 @@ class MainActivity : AppCompatActivity() {
         return (0 until arr.length()).map { val o=arr.getJSONObject(it); Msg(o.getInt("id"),o.getString("receiver"),o.getString("body")) }
     }
     fun updateStatus(id:Int,status:String){
-        val url = URL("$siteUrl/wp-json/smsp1/v1/queue/update")
+        val url = URL("$siteUrl/index.php?rest_route=/smsp1/v1/queue/update")
         val c = (url.openConnection() as HttpURLConnection).apply {
             requestMethod="POST"; doOutput=true; setRequestProperty("Content-Type","application/json") }
         // user_id هم فرستاده می‌شود چون سرور فقط پیام‌های همان کاربر را اجازه‌ی تغییر می‌دهد
