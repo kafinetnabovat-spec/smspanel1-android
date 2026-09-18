@@ -710,14 +710,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------- ارسال با سیم‌کارت ----------
-    fun startSending() {
-        if (userId <= 0 || apiToken.isEmpty()) { show("login"); return }
-        show("send")
-        tvStatus.text = "در حال ارسال…"
-        appendLog("شروع با $siteUrl کاربر $userId\n")
-        sendJob?.cancel()
-        sendJob = scope.launch(Dispatchers.IO) { pollLoop() }
-    }
     override fun onDestroy() { sendJob?.cancel(); scope.cancel(); super.onDestroy() }
     suspend fun pollLoop() {
         while (currentCoroutineContext().isActive) {
@@ -753,5 +745,4 @@ class MainActivity : AppCompatActivity() {
             true
         } catch (e: Exception) { false }
     }
-    fun appendLog(s: String) = runOnUiThread { log.append(s) }
 }
