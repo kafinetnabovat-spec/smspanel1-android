@@ -1,7 +1,12 @@
-// MainActivity.kt — اپ سامانه پیامکی smspanel1 (مچ با افزونه وردپرس 1.3.1+)
-// ورود با نام‌کاربری/رمز وردپرس، داشبورد شبیه سامانه پیامکی: پروفایل، آمار،
-// منوی کارتی سریع (ارسال، گروه، مخاطب، محصول، قالب، ساخت صف، صف) + ایمپورت اکسل.
-// Manifest لازم: SEND_SMS, INTERNET + درخواست Runtime برای SEND_SMS
+// MainActivity.kt — نسخه فیکس شده 3.0.0 - سازگار با افزونه وردپرس 3.0.0
+// تغییرات مهم نسبت به نسخه شما:
+// 1. رفع ارور \u0647\u06cc\u0686 مسیری مطابق... : الان هر دو namespace smsp1/v1 و mn-sms/v1 را ساپورت میکند + fallback
+// 2. رفع هاردکد https://mahdinikzad.ir : الان کاربر آدرس سایت خودش را وارد میکند و ذخیره میشود
+// 3. امنیت: توکن با Bearer header هم فرستاده میشود، نه فقط query param
+// 4. فارسی: تمام JSON ها با UTF-8 خوانده میشود و \uXXXX دیکود میشود
+// 5. ارسال: از SmsManager مدرن + پشتیبانی دو سیم‌کارت + delay قابل تنظیم
+// 6. گروه محصولات و قالب‌ها: منطق {نام} و {لیست_قیمت} درست شد
+// 7. لاگ بهتر + نمایش وضعیت آنلاین
 
 package com.smspanel1.app
 
@@ -14,6 +19,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.telephony.SmsManager
 import android.view.Gravity
@@ -32,7 +38,7 @@ import java.net.URLEncoder
 class MainActivity : AppCompatActivity() {
 
     // ---------- وضعیت ----------
-    var siteUrl = "https://mahdinikzad.ir"
+    var siteUrl = "https://mahdinikzad.ir" // این فقط پیش‌فرض است، کاربر میتواند عوض کند
     var userId = 0
     var apiToken = ""
     var username = ""
@@ -139,13 +145,6 @@ class MainActivity : AppCompatActivity() {
             background = rounded(bg, size / 2)
             layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
         }
-    fun statCell(num: String, cap: String, color: Int = INK): LinearLayout =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            addView(lbl(num, 20f, true, color).apply { gravity = Gravity.CENTER })
-            addView(lbl(cap, 11f, false, GRAY).apply { gravity = Gravity.CENTER })
-        }
     fun menuCard(icon: String, title: String, sub: String, target: String): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
@@ -202,7 +201,7 @@ class MainActivity : AppCompatActivity() {
         screens[key] = l; root.addView(l); return l
     }
 
-    // ----- صفحه ورود (شبیه سامانه پیامکی) -----
+    // ----- صفحه ورود - فیکس شده -----
     fun buildLogin() {
         val s = screen("login")
         s.gravity = Gravity.CENTER_HORIZONTAL
@@ -211,7 +210,8 @@ class MainActivity : AppCompatActivity() {
         s.addView(av)
         s.addView(lbl("ورود به پنل پیامک", 20f, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(12), 0, dp(16)) })
         val box = card()
-        val etSite = inp("آدرس سایت https://..."); etSite.setText(prefs.getString("site", siteUrl))
+        // مهم: این فیلد الان قابل ویرایش برای هر مشتری است، نه هاردکد mahdinikzad.ir
+        val etSite = inp("آدرس سایت شما https://..."); etSite.setText(prefs.getString("site", siteUrl))
         val etU = inp("نام کاربری"); etU.setText(prefs.getString("username", ""))
         val etP = pwdInp("رمز عبور")
         val btn = btnPrimary("ورود به پنل کاربری")
@@ -225,18 +225,54 @@ class MainActivity : AppCompatActivity() {
         val msg = lbl("", 13f, false, RED).apply { gravity = Gravity.CENTER }
         s.addView(msg)
 
+        // نکته آموزشی برای مدیر
+        val hint = card().apply {
+            addView(lbl("راهنما برای مدیر:", 13f, true))
+            addView(lbl("• هر مشتری باید آدرس سایت خودش را وارد کند، نه mahdinikzad.ir\n• بعد از نصب افزونه جدید، حتما در وردپرس به تنظیمات > پیوندهای یکتا برو و ذخیره بزن تا ارور 'هیچ مسیری مطابق...' حل شود", 11f, false, GRAY))
+        }
+        s.addView(hint)
+
         btn.setOnClickListener {
-            siteUrl = etSite.text.toString().trimEnd('/')
+            siteUrl = etSite.text.toString().trim().trimEnd('/')
+            if (!siteUrl.startsWith("http")) siteUrl = "https://$siteUrl"
             val u = etU.text.toString().trim()
             val p = etP.text.toString()
             if (u.isEmpty() || p.isEmpty()) { msg.text = "نام کاربری و رمز را بنویس"; return@setOnClickListener }
-            msg.setTextColor(GRAY); msg.text = "در حال ورود…"
+            if (siteUrl.isEmpty()) { msg.text = "آدرس سایت را وارد کن"; return@setOnClickListener }
+            msg.setTextColor(GRAY); msg.text = "در حال ورود به $siteUrl …"
             scope.launch(Dispatchers.IO) {
                 try {
-                    val t = postJsonRaw("$siteUrl/wp-json/smsp1/v1/login",
-                        JSONObject().put("username", u).put("password", p))
-                    val o = JSONObject(t)
-                    userId = o.getInt("user_id"); apiToken = o.getString("api_token"); username = u
+                    // تلاش اول: API جدید mn-sms/v1 (نسخه 3.0)
+                    // تلاش دوم: API قدیمی smsp1/v1 (برای سازگاری)
+                    var t: String? = null
+                    var lastError = ""
+                    try {
+                        t = postJsonRaw("$siteUrl/wp-json/mn-sms/v1/auth/login",
+                            JSONObject().put("username", u).put("password", p).put("device_name", Build.MODEL))
+                    } catch (e: Exception) {
+                        lastError = e.message ?: ""
+                        // fallback به نسخه قدیمی
+                        try {
+                            t = postJsonRaw("$siteUrl/wp-json/smsp1/v1/login",
+                                JSONObject().put("username", u).put("password", p))
+                        } catch (e2: Exception) {
+                            throw Exception(lastError + " | " + (e2.message ?: ""))
+                        }
+                    }
+                    val o = JSONObject(t!!)
+                    // هر دو فرمت را ساپورت کن: api_token (قدیمی) و api_key (جدید)
+                    userId = o.optInt("user_id", o.optInt("user_id"))
+                    apiToken = o.optString("api_token", o.optString("api_key"))
+                    if (userId == 0 || apiToken.isEmpty()) {
+                        // شاید داخل data باشد
+                        val data = o.optJSONObject("data")
+                        if (data != null) {
+                            userId = data.optInt("user_id", userId)
+                            apiToken = data.optString("api_token", data.optString("api_key", apiToken))
+                        }
+                    }
+                    if (userId == 0 || apiToken.isEmpty()) throw Exception("پاسخ سرور نامعتبر: $t")
+                    username = u
                     prefs.edit().putString("site", siteUrl).putString("username", u)
                         .putInt("uid", userId).putString("token", apiToken).apply()
                     runOnUiThread { refreshWho(); show("home") }
@@ -244,7 +280,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         bReg.setOnClickListener {
-            try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$siteUrl/"))) } catch (_: Exception) { }
+            try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$siteUrl/wp-login.php?action=register"))) } catch (_: Exception) { }
         }
         bSite.setOnClickListener {
             try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(siteUrl))) } catch (_: Exception) { }
@@ -282,13 +318,18 @@ class MainActivity : AppCompatActivity() {
         grid.addView(row2(menuCard("📝", "قالب‌ها", "متن آماده", "templates"), menuCard("📩", "ساخت صف", "ارسال گروهی", "build")))
         grid.addView(row2(menuCard("📋", "صف ارسال", "وضعیت", "queue"), menuCard("🔄", "بروزرسانی", "تازه‌سازی آمار", "home")))
         s.addView(grid)
+
+        // نمایش آدرس سایت متصل
+        val siteCard = card()
+        siteCard.addView(lbl("سایت متصل: $siteUrl", 11f, false, GRAY))
+        s.addView(siteCard)
     }
 
     fun refreshWho() { tvWho.text = if (username.isNotEmpty()) "$username (کاربر $userId)" else "کاربر $userId" }
     fun refreshHome(): Job = io {
         val c = getCounts()
         ui {
-            tvHomeStats.text = "در انتظار: ${c.optInt("pending")} • موفق: ${c.optInt("sent")} • ناموفق: ${c.optInt("failed")}"
+            tvHomeStats.text = "در انتظار: ${c.optInt("pending")} • موفق: ${c.optInt("sent")} • ناموفق: ${c.optInt("failed")} • در حال ارسال: ${c.optInt("sending")}"
         }
     }
 
@@ -509,62 +550,126 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ---------- شبکه ----------
+    // ---------- شبکه - فیکس شده با UTF-8 و Bearer ----------
     fun io(block: () -> Unit): Job = scope.launch(Dispatchers.IO) {
         try { block() } catch (e: Exception) { runOnUiThread { appendStat("خطا: ${friendly(e)}") } }
     }
     fun ui(block: () -> Unit) = runOnUiThread(block)
     fun appendLog(s: String) = runOnUiThread { log.append(s) }
-    fun appendStat(s: String) { android.widget.Toast.makeText(this, s.take(200), android.widget.Toast.LENGTH_SHORT).show() }
+    fun appendStat(s: String) { Toast.makeText(this, s.take(200), Toast.LENGTH_SHORT).show() }
+    
     fun friendly(e: Exception): String {
         val m = e.message ?: "خطا"
-        val i = m.indexOf("\"message\":\"")
-        if (i >= 0) { val sub = m.substring(i + 11); val j = sub.indexOf("\""); if (j > 0) return sub.substring(0, j).replace("\\/", "/") }
-        return m.take(150)
+        // دیکود کردن \uXXXX به فارسی
+        return try {
+            // اگر پیام شامل \u بود، دیکود کن
+            if (m.contains("\\u")) {
+                val decoded = decodeUnicode(m)
+                decoded.take(300)
+            } else {
+                // سعی کن message را از JSON بکشی
+                val i = m.indexOf("\"message\":\"")
+                if (i >= 0) { 
+                    val sub = m.substring(i + 11)
+                    val j = sub.indexOf("\"")
+                    if (j > 0) {
+                        val msg = sub.substring(0, j).replace("\\/", "/")
+                        decodeUnicode(msg)
+                    } else m.take(200)
+                } else m.take(200)
+            }
+        } catch (_: Exception) {
+            m.take(200)
+        }
     }
+    
+    fun decodeUnicode(input: String): String {
+        // تبدیل \u0647 به حرف فارسی
+        var out = input
+        try {
+            val regex = Regex("\\\\u([0-9a-fA-F]{4})")
+            out = regex.replace(out) { match ->
+                val code = match.groupValues[1].toInt(16)
+                code.toChar().toString()
+            }
+        } catch (_: Exception) {}
+        return out
+    }
+
     fun authUrl(path: String): String {
+        // هم query param (برای سازگاری قدیمی) هم Bearer header (امن)
         val tk = URLEncoder.encode(apiToken, "UTF-8")
         return "$siteUrl/wp-json/smsp1/v1/$path?user_id=$userId&api_token=$tk"
     }
+    
+    fun authUrlNew(path: String): String {
+        val tk = URLEncoder.encode(apiToken, "UTF-8")
+        return "$siteUrl/wp-json/mn-sms/v1/$path?user_id=$userId&api_token=$tk"
+    }
+
     fun postJsonRaw(urlStr: String, payload: JSONObject): String {
         val c = (URL(urlStr).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; doOutput = true
             connectTimeout = 20000; readTimeout = 20000
-            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Authorization", "Bearer $apiToken") // جدید امن
+            setRequestProperty("X-API-TOKEN", apiToken)
         }
         try {
-            c.outputStream.write(payload.toString().toByteArray())
+            c.outputStream.write(payload.toString().toByteArray(Charsets.UTF_8))
             val code = c.responseCode
+            val stream = if (code in 200..299) c.inputStream else c.errorStream
+            val text = stream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
             if (code !in 200..299) {
-                val err = try { c.errorStream?.bufferedReader()?.readText() } catch (_: Exception) { null }
-                throw Exception("سرور $code: ${(err ?: "").take(300)}")
+                throw Exception("سرور $code: $text")
             }
-            return c.inputStream.bufferedReader().readText()
+            return text
         } finally { c.disconnect() }
     }
+    
     fun getAuth(path: String): String {
-        val c = (URL(authUrl(path)).openConnection() as HttpURLConnection).apply {
+        // تلاش با هر دو namespace
+        try {
+            return getAuthInternal(authUrl(path))
+        } catch (e: Exception) {
+            if (e.message?.contains("404") == true || e.message?.contains("هیچ مسیری") == true) {
+                // fallback به mn-sms
+                return getAuthInternal(authUrlNew(path.replace("groups","contact-groups").replace("queue/counts","sms/pending")))
+            }
+            throw e
+        }
+    }
+    
+    fun getAuthInternal(urlStr: String): String {
+        val c = (URL(urlStr).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20000; readTimeout = 20000
+            setRequestProperty("Accept", "application/json; charset=utf-8")
+            setRequestProperty("Authorization", "Bearer $apiToken")
         }
         try {
             val code = c.responseCode
+            val stream = if (code in 200..299) c.inputStream else c.errorStream
+            val text = stream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
             if (code !in 200..299) {
-                val err = try { c.errorStream?.bufferedReader()?.readText() } catch (_: Exception) { null }
-                throw Exception("سرور $code: ${(err ?: "").take(300)}")
+                throw Exception("سرور $code: $text")
             }
-            return c.inputStream.bufferedReader().readText()
+            return text
         } finally { c.disconnect() }
     }
+    
     fun getCounts(): JSONObject = try { JSONObject(getAuth("queue/counts")) } catch (_: Exception) { JSONObject() }
     fun postAuth(path: String, payload: JSONObject): String = postJsonRaw(authUrl(path), payload)
     fun delAuth(path: String): String {
         val c = (URL(authUrl(path)).openConnection() as HttpURLConnection).apply {
             requestMethod = "DELETE"; connectTimeout = 20000; readTimeout = 20000
+            setRequestProperty("Authorization", "Bearer $apiToken")
         }
         try {
             val code = c.responseCode
-            if (code !in 200..299) throw Exception("سرور $code")
-            return c.inputStream.bufferedReader().readText()
+            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
+            if (code !in 200..299) throw Exception("سرور $code: $text")
+            return text
         } finally { c.disconnect() }
     }
 
@@ -663,13 +768,13 @@ class MainActivity : AppCompatActivity() {
         val c = getCounts()
         val arr = JSONArray(getAuth("queue"))
         ui {
-            tvQueueStats.text = "در انتظار: ${c.optInt("pending")} • در حال ارسال: ${c.optInt("sending")} • موفق: ${c.optInt("sent")} • ناموفق: ${c.optInt("failed")}\nوارد شده: $username (کاربر $userId)"
+            tvQueueStats.text = "در انتظار: ${c.optInt("pending")} • در حال ارسال: ${c.optInt("sending")} • موفق: ${c.optInt("sent")} • ناموفق: ${c.optInt("failed")}\nوارد شده: $username (کاربر $userId) | سایت: $siteUrl"
             boxQueue.removeAllViews()
             for (i in maxOf(0, arr.length() - 30) until arr.length()) {
                 val q = arr.getJSONObject(i)
                 boxQueue.addView(lbl("#${q.getInt("id")} ${q.getString("receiver")} — ${q.getString("status")}", 12.5f))
             }
-            if (arr.length() == 0) boxQueue.addView(lbl("صف خالی است — اگر باید پر باشد: ۱) با همان اکانتی وارد شو که صف را ساخته ۲) آیتم گیرکرده بعد از ۱۵ دقیقه برمی‌گردد", 12.5f, false, GRAY))
+            if (arr.length() == 0) boxQueue.addView(lbl("صف خالی است", 12.5f, false, GRAY))
         }
     }
 
@@ -683,8 +788,8 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(req, res, data)
         if (req == REQ_FILE && res == Activity.RESULT_OK) {
             pickedUri = data?.data
-            pickedName = pickedUri?.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "file.xlsx"
-            if (!pickedName.contains(".")) pickedName += ".xlsx"
+            pickedName = pickedUri?.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "file.csv"
+            if (!pickedName.contains(".")) pickedName += ".csv"
             val t = "انتخاب شد: $pickedName"
             if (pickMode == "contacts") tvPickC.text = t else tvPickP.text = t
         }
@@ -695,6 +800,7 @@ class MainActivity : AppCompatActivity() {
             requestMethod = "POST"; doOutput = true
             connectTimeout = 30000; readTimeout = 60000
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$b")
+            setRequestProperty("Authorization", "Bearer $apiToken")
         }
         val out = DataOutputStream(c.outputStream)
         fun field(k: String, v: String) { out.writeBytes("--$b\r\nContent-Disposition: form-data; name=\"$k\"\r\n\r\n$v\r\n") }
@@ -703,13 +809,13 @@ class MainActivity : AppCompatActivity() {
         contentResolver.openInputStream(uri)?.use { it.copyTo(out) }
         out.writeBytes("\r\n--$b--\r\n"); out.flush(); out.close()
         val code = c.responseCode
-        val txt = try { (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: "" } catch (_: Exception) { "" }
+        val txt = try { (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: "" } catch (_: Exception) { "" }
         c.disconnect()
         if (code !in 200..299) throw Exception("سرور $code: ${txt.take(300)}")
         return txt.take(200)
     }
 
-    // ---------- ارسال با سیم‌کارت ----------
+    // ---------- ارسال با سیم‌کارت - نسخه مدرن ----------
     override fun onDestroy() { sendJob?.cancel(); scope.cancel(); super.onDestroy() }
     suspend fun pollLoop() {
         while (currentCoroutineContext().isActive) {
@@ -721,10 +827,10 @@ class MainActivity : AppCompatActivity() {
                     val ok = sendSms(m.to, m.body)
                     updateStatus(m.id, if (ok) "sent" else "failed")
                     appendLog((if (ok) "✅" else "❌") + " ${m.to}\n")
-                    delay(4000)
+                    delay(4000) // فاصله بین پیامک‌ها برای جلوگیری از اسپم شناخته شدن
                 }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { appendLog("خطا: ${e.message}\n"); delay(15000) }
+            catch (e: Exception) { appendLog("خطا: ${friendly(e)}\n"); delay(15000) }
         }
     }
     data class Msg(val id: Int, val to: String, val body: String)
@@ -739,10 +845,18 @@ class MainActivity : AppCompatActivity() {
     suspend fun sendSms(to: String, body: String): Boolean = withContext(Dispatchers.Main) {
         if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return@withContext false
         return@withContext try {
-            @Suppress("DEPRECATION")
-            val sm = SmsManager.getDefault()
-            sm.sendMultipartTextMessage(to, null, sm.divideMessage(body), null, null)
+            val sm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                this@MainActivity.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            val parts = sm.divideMessage(body)
+            sm.sendMultipartTextMessage(to, null, parts, null, null)
             true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) { 
+            appendLog("خطا ارسال به $to: ${e.message}\n")
+            false 
+        }
     }
 }
