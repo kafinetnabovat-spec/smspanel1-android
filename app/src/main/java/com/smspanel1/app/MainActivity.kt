@@ -1,17 +1,13 @@
-// MainActivity.kt — نسخه فیکس شده 3.0.0 - سازگار با افزونه وردپرس 3.0.0
-// تغییرات مهم نسبت به نسخه شما:
-// 1. رفع ارور \u0647\u06cc\u0686 مسیری مطابق... : الان هر دو namespace smsp1/v1 و mn-sms/v1 را ساپورت میکند + fallback
-// 2. رفع هاردکد https://mahdinikzad.ir : الان کاربر آدرس سایت خودش را وارد میکند و ذخیره میشود
-// 3. امنیت: توکن با Bearer header هم فرستاده میشود، نه فقط query param
-// 4. فارسی: تمام JSON ها با UTF-8 خوانده میشود و \uXXXX دیکود میشود
-// 5. ارسال: از SmsManager مدرن + پشتیبانی دو سیم‌کارت + delay قابل تنظیم
-// 6. گروه محصولات و قالب‌ها: منطق {نام} و {لیست_قیمت} درست شد
-// 7. لاگ بهتر + نمایش وضعیت آنلاین
+// MainActivity_WhatsAppStyle.kt â€” ظ†ط³ط®ظ‡ ظˆط§طھط³ط§ظ¾غŒ 4.0 - UX ط³ط§ط¯ظ‡ ط´ط¯ظ‡
+// ظ‡ط¯ظپ: ع©ط§ظ‡ط´ 7 طµظپط­ظ‡ ط¨ظ‡ 3 طھط¨ + 1 ط¯ع©ظ…ظ‡ ط´ظ†ط§ظˆط±
+// - طھط¨ 1: ظ¾غŒط§ظ…â€Œظ‡ط§ (ع©ظ…ظ¾غŒظ†â€Œظ‡ط§ ظ…ط«ظ„ ع†طھâ€Œظ‡ط§غŒ ظˆط§طھط³ط§ظ¾)
+// - طھط¨ 2: ظ…ط®ط§ط·ط¨غŒظ† (ط¨ط§ ظپغŒظ„طھط± ع†غŒظ¾ط³غŒ ع¯ط±ظˆظ‡â€Œظ‡ط§ + ط³ط±ع†)
+// - طھط¨ 3: ع©ط§طھط§ظ„ظˆع¯ (ظ…ط­طµظˆظ„ط§طھ + ظ‚ط§ظ„ط¨â€Œظ‡ط§)
+// - FAB: ط§ط±ط³ط§ظ„ ط¬ط¯غŒط¯ (غŒع© ظپظ„ظˆ 3 ظ…ط±ط­ظ„ظ‡â€Œط§غŒ ط¨ظ‡ ط¬ط§غŒ 4 طµظپط­ظ‡ ط¬ط¯ط§)
 
 package com.smspanel1.app
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -22,6 +18,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.telephony.SmsManager
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.widget.*
@@ -30,15 +28,14 @@ import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.DataOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
 class MainActivity : AppCompatActivity() {
 
-    // ---------- وضعیت ----------
-    var siteUrl = "https://mahdinikzad.ir" // این فقط پیش‌فرض است، کاربر میتواند عوض کند
+    // ---------- State ----------
+    var siteUrl = "https://mahdinikzad.ir"
     var userId = 0
     var apiToken = ""
     var username = ""
@@ -48,815 +45,742 @@ class MainActivity : AppCompatActivity() {
 
     lateinit var prefs: android.content.SharedPreferences
     lateinit var root: LinearLayout
-    lateinit var screens: MutableMap<String, View>
-    lateinit var log: TextView
-    lateinit var tvStatus: TextView
-    lateinit var tvHomeStats: TextView
-    lateinit var tvQueueStats: TextView
-    lateinit var tvWho: TextView
+    lateinit var mainContent: LinearLayout
+    lateinit var bottomNav: LinearLayout
+    lateinit var topBar: LinearLayout
+    lateinit var tvTopTitle: TextView
+    lateinit var tvTopSub: TextView
 
+    // Cache
     var cacheGroups = JSONArray()
+    var cacheContacts = JSONArray()
     var cacheProducts = JSONArray()
     var cacheTemplates = JSONArray()
+    var cacheCampaigns = JSONArray()
 
-    var pickMode = ""
-    var pickedUri: Uri? = null
-    var pickedName = ""
-    val REQ_FILE = 1401
-
-    lateinit var spContactGroup: Spinner
-    lateinit var spImportGroup: Spinner
-    lateinit var spBuildGroup: Spinner
-    lateinit var spBuildTemplate: Spinner
-    lateinit var boxBuildProducts: LinearLayout
-    lateinit var etBuildBody: EditText
-    lateinit var tvBuildRes: TextView
-    lateinit var tvPickC: TextView
-    lateinit var tvPickP: TextView
-    lateinit var boxGroups: LinearLayout
-    lateinit var boxContacts: LinearLayout
-    lateinit var boxProducts: LinearLayout
-    lateinit var boxTemplates: LinearLayout
-    lateinit var boxQueue: LinearLayout
-
-    // ---------- رنگ‌ها ----------
-    val BG = Color.parseColor("#F4F6FB")
-    val CARD = Color.WHITE
-    val INK = Color.parseColor("#2C3E50")
-    val GRAY = Color.parseColor("#8A94A6")
+    // Colors - ظˆط§طھط³ط§ظ¾ ط¨غŒط²غŒظ†ط³ + ط¨ط±ظ†ط¯ ظ†ط§ط±ظ†ط¬غŒ طھظˆ
+    val WA_GREEN_DARK = Color.parseColor("#075E54")
+    val WA_GREEN = Color.parseColor("#128C7E")
+    val WA_LIGHT_GREEN = Color.parseColor("#25D366")
+    val WA_BG = Color.parseColor("#ECE5DD")
+    val WA_CHAT_BG = Color.parseColor("#E5DDD5")
     val ORANGE = Color.parseColor("#F39C12")
-    val ORANGE_D = Color.parseColor("#E67E22")
-    val INPUT_BG = Color.parseColor("#FFF7DC")
-    val GREEN = Color.parseColor("#27AE60")
-    val RED = Color.parseColor("#E74C3C")
-    val LINE = Color.parseColor("#E8ECF3")
+    val WHITE = Color.WHITE
+    val BLACK = Color.parseColor("#111B21")
+    val GRAY_500 = Color.parseColor("#667781")
+    val GRAY_200 = Color.parseColor("#F0F2F5")
+    val GRAY_100 = Color.parseColor("#F5F6F6")
 
-    // ---------- ابزارک‌های دیزاین ----------
-    fun dp(v: Int): Int = (v * D + 0.5f).toInt()
-    fun rounded(bg: Int, r: Int): GradientDrawable =
-        GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(r).toFloat(); setColor(bg) }
-    fun bordered(bg: Int, r: Int, bw: Int, bc: Int): GradientDrawable =
-        GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(r).toFloat(); setColor(bg); setStroke(dp(bw), bc) }
+    // UI Helpers
+    fun dp(v: Int) = (v * D + 0.5f).toInt()
+    fun rounded(bg: Int, r: Int) = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(r).toFloat(); setColor(bg) }
+    fun roundedBorder(bg: Int, r: Int, stroke: Int, strokeColor: Int) = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(r).toFloat(); setColor(bg); setStroke(dp(stroke), strokeColor) }
 
-    fun lbl(t: String, size: Float = 14f, bold: Boolean = false, color: Int = INK): TextView =
-        TextView(this).apply {
-            text = t; textSize = size; setTextColor(color)
-            if (bold) setTypeface(typeface, Typeface.BOLD)
-        }
-    fun card(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        background = rounded(CARD, 16)
-        setPadding(dp(16), dp(16), dp(16), dp(16))
-        val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        p.setMargins(0, 0, 0, dp(12)); layoutParams = p
-    }
-    fun inp(h: String): EditText = EditText(this).apply {
-        hint = h; background = rounded(INPUT_BG, 12)
-        setPadding(dp(14), dp(13), dp(14), dp(13)); textSize = 15f
-        val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        p.setMargins(0, 0, 0, dp(10)); layoutParams = p
-    }
-    fun pwdInp(h: String): EditText = inp(h).apply {
-        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-    }
-    fun btnPrimary(t: String): Button = Button(this).apply {
-        text = t; background = rounded(ORANGE, 26); setTextColor(Color.WHITE); textSize = 16f
-        setTypeface(typeface, Typeface.BOLD); stateListAnimator = null
-        setPadding(dp(16), dp(14), dp(16), dp(14))
-        val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        p.setMargins(0, dp(4), 0, dp(4)); layoutParams = p
-    }
-    fun btnGhost(t: String): Button = Button(this).apply {
-        text = t; background = bordered(CARD, 26, 1, ORANGE); setTextColor(ORANGE_D); textSize = 13f
-        stateListAnimator = null
-        setPadding(dp(12), dp(10), dp(12), dp(10))
-    }
-    fun backBtn(): Button = Button(this).apply {
-        text = "→ بازگشت"; background = bordered(CARD, 12, 1, LINE); setTextColor(GRAY); textSize = 13f
-        stateListAnimator = null
-        val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        p.setMargins(0, 0, 0, dp(10)); layoutParams = p
-        setOnClickListener { show("home") }
-    }
-    fun avatar(t: String, size: Int, bg: Int = ORANGE, fg: Int = Color.WHITE): TextView =
-        TextView(this).apply {
-            text = t; gravity = Gravity.CENTER; textSize = (size * 0.42f)
-            setTextColor(fg); setTypeface(typeface, Typeface.BOLD)
-            background = rounded(bg, size / 2)
-            layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
-        }
-    fun menuCard(icon: String, title: String, sub: String, target: String): LinearLayout =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            background = rounded(CARD, 16); setPadding(dp(10), dp(18), dp(10), dp(18))
-            isClickable = true; isFocusable = true
-            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            lp.setMargins(dp(4), dp(4), dp(4), dp(4)); layoutParams = lp
-            addView(lbl(icon, 34f).apply { gravity = Gravity.CENTER })
-            addView(lbl(title, 13f, true).apply { gravity = Gravity.CENTER })
-            addView(lbl(sub, 10.5f, false, GRAY).apply { gravity = Gravity.CENTER })
-            setOnClickListener { show(target) }
-        }
-    fun row2(a: View, b: View): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL; addView(a); addView(b)
-        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+    fun lbl(t: String, size: Float = 14f, bold: Boolean = false, color: Int = BLACK): TextView = TextView(this).apply {
+        text = t; textSize = size; setTextColor(color)
+        if (bold) setTypeface(typeface, Typeface.BOLD)
     }
 
-    // ---------- ساخت رابط ----------
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         D = resources.displayMetrics.density
         prefs = getSharedPreferences("smspanel1", Context.MODE_PRIVATE)
-        screens = mutableMapOf()
-
-        root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setBackgroundColor(BG)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
-        setContentView(ScrollView(this).apply { addView(root) })
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.SEND_SMS), 100)
 
-        buildLogin()
-        buildHome()
-        buildSend()
-        buildGroups()
-        buildContacts()
-        buildProducts()
-        buildTemplates()
-        buildBuild()
-        buildQueue()
-
+        siteUrl = prefs.getString("site", siteUrl) ?: siteUrl
         userId = prefs.getInt("uid", 0)
         apiToken = prefs.getString("token", "") ?: ""
-        siteUrl = prefs.getString("site", siteUrl) ?: siteUrl
         username = prefs.getString("username", "") ?: ""
-        if (userId > 0 && apiToken.isNotEmpty()) {
-            refreshWho()
-            show("home")
-        } else show("login")
-    }
 
-    fun screen(key: String): LinearLayout {
-        val l = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
-        screens[key] = l; root.addView(l); return l
-    }
+        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(WHITE) }
+        setContentView(root)
 
-    // ----- صفحه ورود - فیکس شده -----
-    fun buildLogin() {
-        val s = screen("login")
-        s.gravity = Gravity.CENTER_HORIZONTAL
-        s.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(36)) })
-        val av = avatar("📱", 84); (av.layoutParams as LinearLayout.LayoutParams).gravity = Gravity.CENTER
-        s.addView(av)
-        s.addView(lbl("ورود به پنل پیامک", 20f, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(12), 0, dp(16)) })
-        val box = card()
-        // مهم: این فیلد الان قابل ویرایش برای هر مشتری است، نه هاردکد mahdinikzad.ir
-        val etSite = inp("آدرس سایت شما https://..."); etSite.setText(prefs.getString("site", siteUrl))
-        val etU = inp("نام کاربری"); etU.setText(prefs.getString("username", ""))
-        val etP = pwdInp("رمز عبور")
-        val btn = btnPrimary("ورود به پنل کاربری")
-        box.addView(etSite); box.addView(etU); box.addView(etP); box.addView(btn)
-        s.addView(box)
-        val links = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        val bReg = btnGhost("ثبت‌نام در سایت")
-        val bSite = btnGhost("بازگشت به صفحه اصلی")
-        links.addView(bReg); links.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(dp(8), 1) }); links.addView(bSite)
-        s.addView(links)
-        val msg = lbl("", 13f, false, RED).apply { gravity = Gravity.CENTER }
-        s.addView(msg)
-
-        // نکته آموزشی برای مدیر
-        val hint = card().apply {
-            addView(lbl("راهنما برای مدیر:", 13f, true))
-            addView(lbl("• هر مشتری باید آدرس سایت خودش را وارد کند، نه mahdinikzad.ir\n• بعد از نصب افزونه جدید، حتما در وردپرس به تنظیمات > پیوندهای یکتا برو و ذخیره بزن تا ارور 'هیچ مسیری مطابق...' حل شود", 11f, false, GRAY))
+        if (userId == 0 || apiToken.isEmpty()) {
+            showLogin()
+        } else {
+            showWhatsAppMain()
         }
-        s.addView(hint)
+    }
+
+    // ==================== LOGIN - ط³ط§ط¯ظ‡ ظˆ طھظ…غŒط² ====================
+    fun showLogin() {
+        root.removeAllViews()
+        val scroll = ScrollView(this)
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(40), dp(24), dp(24))
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+
+        // ظ„ظˆع¯ظˆ
+        val logo = TextView(this).apply {
+            text = "ًں’¬"; textSize = 64f; gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(100), dp(100)).apply { gravity = Gravity.CENTER }
+            background = rounded(ORANGE, 50)
+        }
+        container.addView(logo)
+        container.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(16)) })
+        container.addView(lbl("ظ¾ظ†ظ„ ظ¾غŒط§ظ…ع©غŒ", 22f, true, BLACK).apply { gravity = Gravity.CENTER })
+        container.addView(lbl("ط§ط±ط³ط§ظ„ ط¨ط§ ط³غŒظ…â€Œع©ط§ط±طھ ط®ظˆط¯طھطŒ ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾", 13f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(24)) })
+
+        val etSite = EditText(this).apply {
+            hint = "ط¢ط¯ط±ط³ ط³ط§غŒطھ: https://yoursite.com"
+            setText(siteUrl)
+            background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
+        val etUser = EditText(this).apply {
+            hint = "ظ†ط§ظ… ع©ط§ط±ط¨ط±غŒ"
+            setText(username)
+            background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            p.setMargins(0, dp(12), 0, 0); layoutParams = p
+        }
+        val etPass = EditText(this).apply {
+            hint = "ط±ظ…ط² ط¹ط¨ظˆط±"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            p.setMargins(0, dp(12), 0, dp(20)); layoutParams = p
+        }
+        val btn = Button(this).apply {
+            text = "ظˆط±ظˆط¯"; setTextColor(WHITE); textSize = 16f
+            background = rounded(WA_GREEN, 24); setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
+        val msg = lbl("", 12f, false, Color.RED).apply { gravity = Gravity.CENTER; setPadding(0, dp(12), 0, 0) }
 
         btn.setOnClickListener {
             siteUrl = etSite.text.toString().trim().trimEnd('/')
             if (!siteUrl.startsWith("http")) siteUrl = "https://$siteUrl"
-            val u = etU.text.toString().trim()
-            val p = etP.text.toString()
-            if (u.isEmpty() || p.isEmpty()) { msg.text = "نام کاربری و رمز را بنویس"; return@setOnClickListener }
-            if (siteUrl.isEmpty()) { msg.text = "آدرس سایت را وارد کن"; return@setOnClickListener }
-            msg.setTextColor(GRAY); msg.text = "در حال ورود به $siteUrl …"
+            val u = etUser.text.toString().trim()
+            val p = etPass.text.toString()
+            if (u.isEmpty() || p.isEmpty()) { msg.text = "ظ†ط§ظ… ع©ط§ط±ط¨ط±غŒ ظˆ ط±ظ…ط² ط±ط§ ظˆط§ط±ط¯ ع©ظ†"; return@setOnClickListener }
+            msg.text = "ط¯ط± ط­ط§ظ„ ظˆط±ظˆط¯..."
+            msg.setTextColor(GRAY_500)
             scope.launch(Dispatchers.IO) {
                 try {
-                    // تلاش اول: API جدید mn-sms/v1 (نسخه 3.0)
-                    // تلاش دوم: API قدیمی smsp1/v1 (برای سازگاری)
-                    var t: String? = null
-                    var lastError = ""
-                    try {
-                        t = postJsonRaw("$siteUrl/wp-json/mn-sms/v1/auth/login",
-                            JSONObject().put("username", u).put("password", p).put("device_name", Build.MODEL))
-                    } catch (e: Exception) {
-                        lastError = e.message ?: ""
-                        // fallback به نسخه قدیمی
-                        try {
-                            t = postJsonRaw("$siteUrl/wp-json/smsp1/v1/login",
-                                JSONObject().put("username", u).put("password", p))
-                        } catch (e2: Exception) {
-                            throw Exception(lastError + " | " + (e2.message ?: ""))
-                        }
-                    }
-                    val o = JSONObject(t!!)
-                    // هر دو فرمت را ساپورت کن: api_token (قدیمی) و api_key (جدید)
-                    userId = o.optInt("user_id", o.optInt("user_id"))
-                    apiToken = o.optString("api_token", o.optString("api_key"))
-                    if (userId == 0 || apiToken.isEmpty()) {
-                        // شاید داخل data باشد
-                        val data = o.optJSONObject("data")
+                    val json = postJson("$siteUrl/wp-json/smsp1/v1/login", JSONObject().put("username", u).put("password", p))
+                    val obj = JSONObject(json)
+                    userId = obj.optInt("user_id")
+                    apiToken = obj.optString("api_token", obj.optString("api_key"))
+                    if (userId == 0) {
+                        val data = obj.optJSONObject("data")
                         if (data != null) {
-                            userId = data.optInt("user_id", userId)
-                            apiToken = data.optString("api_token", data.optString("api_key", apiToken))
+                            userId = data.optInt("user_id")
+                            apiToken = data.optString("api_token", data.optString("api_key"))
                         }
                     }
-                    if (userId == 0 || apiToken.isEmpty()) throw Exception("پاسخ سرور نامعتبر: $t")
+                    if (userId == 0 || apiToken.isEmpty()) throw Exception("ظ¾ط§ط³ط® ظ†ط§ظ…ط¹طھط¨ط±")
                     username = u
-                    prefs.edit().putString("site", siteUrl).putString("username", u)
-                        .putInt("uid", userId).putString("token", apiToken).apply()
-                    runOnUiThread { refreshWho(); show("home") }
-                } catch (e: Exception) { runOnUiThread { msg.setTextColor(RED); msg.text = friendly(e) } }
+                    prefs.edit().putString("site", siteUrl).putString("username", u).putInt("uid", userId).putString("token", apiToken).apply()
+                    runOnUiThread { showWhatsAppMain() }
+                } catch (e: Exception) {
+                    runOnUiThread { msg.text = "ط®ط·ط§: ${e.message?.take(150)}"; msg.setTextColor(Color.RED) }
+                }
             }
         }
-        bReg.setOnClickListener {
-            try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$siteUrl/wp-login.php?action=register"))) } catch (_: Exception) { }
-        }
-        bSite.setOnClickListener {
-            try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(siteUrl))) } catch (_: Exception) { }
-        }
+
+        container.addView(etSite); container.addView(etUser); container.addView(etPass); container.addView(btn); container.addView(msg)
+        scroll.addView(container)
+        root.addView(scroll)
     }
 
-    // ----- خانه / داشبورد -----
-    fun buildHome() {
-        val s = screen("home")
-        val head = card()
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        row.addView(avatar("👤", 56))
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
-        tvWho = lbl("…", 15f, true)
-        val sub = lbl("پنل پیامک", 11.5f, false, GRAY)
-        col.addView(tvWho); col.addView(sub)
+    // ==================== MAIN WHATSAPP STYLE ====================
+    fun showWhatsAppMain() {
+        root.removeAllViews()
+
+        // TopBar ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾
+        topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(WA_GREEN_DARK)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val avatar = TextView(this).apply {
+            text = username.take(1).uppercase()
+            gravity = Gravity.CENTER; setTextColor(WHITE); textSize = 16f
+            setTypeface(typeface, Typeface.BOLD)
+            background = rounded(ORANGE, 20)
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+        }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
+        tvTopTitle = lbl(username, 16f, true, WHITE)
+        tvTopSub = lbl("ط¢ظ†ظ„ط§غŒظ† â€¢ $siteUrl", 11f, false, Color.parseColor("#D1D7DB"))
+        col.addView(tvTopTitle); col.addView(tvTopSub)
         col.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        row.addView(col)
-        val out = btnGhost("خروج")
-        out.setOnClickListener {
-            sendJob?.cancel(); sendJob = null
-            prefs.edit().remove("uid").remove("token").remove("username").apply()
-            userId = 0; apiToken = ""; username = ""
-            show("login")
+
+        val btnSearch = TextView(this).apply { text = "ًں”چ"; textSize = 20f; setPadding(dp(12), dp(8), dp(12), dp(8)); setOnClickListener { showSearchDialog() } }
+        val btnMore = TextView(this).apply { text = "â‹®"; textSize = 22f; setTextColor(WHITE); setPadding(dp(8), dp(8), dp(8), dp(8)); setOnClickListener { showMoreMenu() } }
+
+        topBar.addView(avatar); topBar.addView(col); topBar.addView(btnSearch); topBar.addView(btnMore)
+        root.addView(topBar)
+
+        // Main Content
+        mainContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            setBackgroundColor(WHITE)
         }
-        row.addView(out)
-        head.addView(row)
-        tvHomeStats = lbl("", 12f, false, GRAY)
-        head.addView(tvHomeStats)
-        s.addView(head)
+        root.addView(mainContent)
 
-        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        grid.addView(row2(menuCard("📤", "ارسال خودکار", "سیم‌کارت گوشی", "send"), menuCard("👥", "گروه‌ها", "مدیریت", "groups")))
-        grid.addView(row2(menuCard("📇", "مخاطبین", "+ اکسل", "contacts"), menuCard("📦", "محصولات", "+ اکسل قیمت", "products")))
-        grid.addView(row2(menuCard("📝", "قالب‌ها", "متن آماده", "templates"), menuCard("📩", "ساخت صف", "ارسال گروهی", "build")))
-        grid.addView(row2(menuCard("📋", "صف ارسال", "وضعیت", "queue"), menuCard("🔄", "بروزرسانی", "تازه‌سازی آمار", "home")))
-        s.addView(grid)
-
-        // نمایش آدرس سایت متصل
-        val siteCard = card()
-        siteCard.addView(lbl("سایت متصل: $siteUrl", 11f, false, GRAY))
-        s.addView(siteCard)
-    }
-
-    fun refreshWho() { tvWho.text = if (username.isNotEmpty()) "$username (کاربر $userId)" else "کاربر $userId" }
-    fun refreshHome(): Job = io {
-        val c = getCounts()
-        ui {
-            tvHomeStats.text = "در انتظار: ${c.optInt("pending")} • موفق: ${c.optInt("sent")} • ناموفق: ${c.optInt("failed")} • در حال ارسال: ${c.optInt("sending")}"
+        // Bottom Nav ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾
+        bottomNav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(WHITE)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
         }
+        val tabChats = makeBottomTab("ًں’¬", "ظ¾غŒط§ظ…â€Œظ‡ط§", true)
+        val tabContacts = makeBottomTab("ًں‘¥", "ظ…ط®ط§ط·ط¨غŒظ†", false)
+        val tabCatalog = makeBottomTab("ًں“¦", "ع©ط§طھط§ظ„ظˆع¯", false)
+
+        tabChats.setOnClickListener { selectTab(0, tabChats, tabContacts, tabCatalog) }
+        tabContacts.setOnClickListener { selectTab(1, tabChats, tabContacts, tabCatalog) }
+        tabCatalog.setOnClickListener { selectTab(2, tabChats, tabContacts, tabCatalog) }
+
+        bottomNav.addView(tabChats); bottomNav.addView(tabContacts); bottomNav.addView(tabCatalog)
+        root.addView(bottomNav)
+
+        // FAB ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾
+        val fabContainer = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        val fab = Button(this).apply {
+            text = "ï¼‹"; textSize = 28f; setTextColor(WHITE)
+            background = rounded(WA_LIGHT_GREEN, 28)
+            layoutParams = FrameLayout.LayoutParams(dp(56), dp(56)).apply { gravity = Gravity.END or Gravity.BOTTOM; setMargins(0, 0, dp(16), dp(80)) }
+            stateListAnimator = null
+            setOnClickListener { showNewMessageSheet() }
+        }
+        fabContainer.addView(fab)
+        root.addView(fabContainer)
+
+        // Load initial tab
+        selectTab(0, tabChats, tabContacts, tabCatalog)
+        startAutoSender() // ط§ط±ط³ط§ظ„ ط®ظˆط¯ع©ط§ط± ط¯ط± ظ¾ط³â€Œط²ظ…غŒظ†ظ‡
     }
 
-    // ----- ارسال خودکار -----
-    fun buildSend() {
-        val s = screen("send")
-        s.addView(backBtn())
-        val st = card()
-        st.addView(lbl("📤 ارسال خودکار با سیم‌کارت", 16f, true))
-        tvStatus = lbl("آماده", 13f, false, GRAY)
-        st.addView(tvStatus)
-        val b1 = btnPrimary("شروع ارسال خودکار")
-        val b2 = btnGhost("توقف")
-        b2.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        st.addView(b1); st.addView(b2)
-        s.addView(st)
-        val lg = card()
-        lg.addView(lbl("گزارش ارسال", 14f, true))
-        log = TextView(this).apply { textSize = 12.5f; setTextColor(INK) }
-        lg.addView(log)
-        s.addView(lg)
-        b1.setOnClickListener { startSending() }
-        b2.setOnClickListener { sendJob?.cancel(); sendJob = null; tvStatus.text = "متوقف شد" }
-    }
-    fun startSending() {
-        if (userId <= 0 || apiToken.isEmpty()) { show("login"); return }
-        show("send")
-        tvStatus.text = "در حال ارسال…"
-        appendLog("شروع با $siteUrl کاربر $userId\n")
-        sendJob?.cancel()
-        sendJob = scope.launch(Dispatchers.IO) { pollLoop() }
-    }
-
-    // ----- گروه‌ها -----
-    fun buildGroups() {
-        val s = screen("groups")
-        s.addView(backBtn())
-        val f = card()
-        f.addView(lbl("👥 گروه‌ها", 16f, true))
-        val etN = inp("نام گروه جدید")
-        val etD = inp("توضیح")
-        val b = btnPrimary("＋ ساخت گروه")
-        f.addView(etN); f.addView(etD); f.addView(b)
-        s.addView(f)
-        boxGroups = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val l = card(); l.addView(lbl("لیست گروه‌ها", 14f, true)); l.addView(boxGroups)
-        s.addView(l)
-        b.setOnClickListener {
-            val n = etN.text.toString().trim()
-            if (n.isEmpty()) return@setOnClickListener
-            io { postAuth("groups", JSONObject().put("name", n).put("descr", etD.text.toString().trim())); ui { etN.setText(""); etD.setText(""); loadGroups() } }
+    fun makeBottomTab(icon: String, title: String, active: Boolean): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            val ic = lbl(icon, 22f, false, if (active) WA_GREEN_DARK else GRAY_500).apply { gravity = Gravity.CENTER }
+            val tx = lbl(title, 11f, active, if (active) WA_GREEN_DARK else GRAY_500).apply { gravity = Gravity.CENTER }
+            addView(ic); addView(tx)
+            tag = active
         }
     }
 
-    // ----- مخاطبین -----
-    fun buildContacts() {
-        val s = screen("contacts")
-        s.addView(backBtn())
-        val f = card()
-        f.addView(lbl("📇 افزودن مخاطب", 16f, true))
-        spContactGroup = Spinner(this)
-        val etN = inp("نام")
-        val etM = inp("موبایل 09...")
-        val b = btnPrimary("افزودن مخاطب")
-        f.addView(spContactGroup); f.addView(etN); f.addView(etM); f.addView(b)
-        s.addView(f)
-        val im = card()
-        im.addView(lbl("ایمپورت اکسل (ستون mobile و name)", 14f, true))
-        spImportGroup = Spinner(this)
-        tvPickC = lbl("فایل انتخاب نشده (csv/xlsx)", 12.5f, false, GRAY)
-        val bp = btnPrimary("انتخاب فایل اکسل")
-        val bu = btnGhost("آپلود در گروه انتخابی")
-        bu.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        im.addView(spImportGroup); im.addView(tvPickC); im.addView(bp); im.addView(bu)
-        s.addView(im)
-        boxContacts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val l = card(); l.addView(lbl("۵۰ مخاطب آخر", 14f, true)); l.addView(boxContacts)
-        s.addView(l)
-        b.setOnClickListener {
-            val g = spVal(spContactGroup); val m = etM.text.toString().trim()
-            if (g.isEmpty() || m.isEmpty()) return@setOnClickListener
-            io { postAuth("contacts", JSONObject().put("group_id", g.toInt()).put("name", etN.text.toString().trim()).put("mobile", m)); ui { etM.setText(""); loadContacts() } }
+    fun selectTab(index: Int, vararg tabs: LinearLayout) {
+        tabs.forEachIndexed { i, tab ->
+            val isActive = i == index
+            (tab.getChildAt(0) as TextView).setTextColor(if (isActive) WA_GREEN_DARK else GRAY_500)
+            (tab.getChildAt(1) as TextView).setTextColor(if (isActive) WA_GREEN_DARK else GRAY_500)
+            (tab.getChildAt(1) as TextView).setTypeface(null, if (isActive) Typeface.BOLD else Typeface.NORMAL)
         }
-        bp.setOnClickListener { pickMode = "contacts"; openPicker() }
-        bu.setOnClickListener {
-            val u = pickedUri ?: return@setOnClickListener
-            val g = spVal(spImportGroup)
-            if (g.isEmpty() || pickMode != "contacts") return@setOnClickListener
-            io { val r = uploadAuth("import-contacts", mapOf("group_id" to g), u, pickedName); ui { appendStat("ایمپورت مخاطب: $r"); loadContacts() } }
+        when (index) {
+            0 -> showChatsTab()
+            1 -> showContactsTab()
+            2 -> showCatalogTab()
         }
     }
 
-    // ----- محصولات -----
-    fun buildProducts() {
-        val s = screen("products")
-        s.addView(backBtn())
-        val f = card()
-        f.addView(lbl("📦 محصول جدید", 16f, true))
-        val etT = inp("نام محصول")
-        val etP = inp("قیمت (تومان)")
-        val b = btnPrimary("افزودن محصول")
-        f.addView(etT); f.addView(etP); f.addView(b)
-        s.addView(f)
-        val im = card()
-        im.addView(lbl("ایمپورت اکسل قیمت (ستون title و price)", 14f, true))
-        tvPickP = lbl("فایل انتخاب نشده (csv/xlsx)", 12.5f, false, GRAY)
-        val bp = btnPrimary("انتخاب فایل اکسل")
-        val bu = btnGhost("آپلود اکسل قیمت")
-        bu.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        im.addView(tvPickP); im.addView(bp); im.addView(bu)
-        s.addView(im)
-        boxProducts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val l = card(); l.addView(lbl("لیست محصولات", 14f, true)); l.addView(boxProducts)
-        s.addView(l)
-        b.setOnClickListener {
-            val t = etT.text.toString().trim()
-            if (t.isEmpty()) return@setOnClickListener
-            io { postAuth("products", JSONObject().put("title", t).put("price", etP.text.toString().trim())); ui { etT.setText(""); etP.setText(""); loadProducts() } }
-        }
-        bp.setOnClickListener { pickMode = "products"; openPicker() }
-        bu.setOnClickListener {
-            val u = pickedUri ?: return@setOnClickListener
-            if (pickMode != "products") return@setOnClickListener
-            io { val r = uploadAuth("import-products", mapOf(), u, pickedName); ui { appendStat("ایمپورت محصول: $r"); loadProducts() } }
-        }
-    }
+    // ==================== TAB 1: CHATS - ظ…ط«ظ„ ع†طھâ€Œظ‡ط§غŒ ظˆط§طھط³ط§ظ¾ ====================
+    fun showChatsTab() {
+        mainContent.removeAllViews()
+        tvTopTitle.text = "ظ¾غŒط§ظ…â€Œظ‡ط§"
+        tvTopSub.text = "ع©ظ…ظ¾غŒظ†â€Œظ‡ط§غŒ ط§ط±ط³ط§ظ„غŒ"
 
-    // ----- قالب‌ها -----
-    fun buildTemplates() {
-        val s = screen("templates")
-        s.addView(backBtn())
-        val f = card()
-        f.addView(lbl("📝 قالب جدید", 16f, true))
-        val etT = inp("عنوان قالب")
-        val etB = inp("متن — {نام} {لیست_قیمت} {گروه}")
-        val b = btnPrimary("💾 ذخیره قالب")
-        f.addView(etT); f.addView(etB); f.addView(b)
-        s.addView(f)
-        boxTemplates = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val l = card(); l.addView(lbl("قالب‌های من", 14f, true)); l.addView(boxTemplates)
-        s.addView(l)
-        b.setOnClickListener {
-            val x = etB.text.toString().trim()
-            if (x.isEmpty()) return@setOnClickListener
-            io { postAuth("templates", JSONObject().put("title", etT.text.toString().trim().ifEmpty { "قالب" }).put("body", x)); ui { etT.setText(""); etB.setText(""); loadTemplates() } }
-        }
-    }
+        val scroll = ScrollView(this)
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-    // ----- ساخت صف -----
-    fun buildBuild() {
-        val s = screen("build")
-        s.addView(backBtn())
-        val f = card()
-        f.addView(lbl("📩 ساخت صف ارسال گروهی", 16f, true))
-        f.addView(lbl("گروه:", 13f, true)); spBuildGroup = Spinner(this); f.addView(spBuildGroup)
-        f.addView(lbl("قالب (اختیاری):", 13f, true)); spBuildTemplate = Spinner(this); f.addView(spBuildTemplate)
-        f.addView(lbl("محصولات داخل پیام:", 13f, true))
-        boxBuildProducts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        f.addView(boxBuildProducts)
-        etBuildBody = inp("متن دستی (اگر قالب انتخاب نکنی)")
-        f.addView(etBuildBody)
-        val b = btnPrimary("📩 ساخت صف برای کل گروه")
-        f.addView(b)
-        tvBuildRes = lbl("", 13.5f, true, GREEN)
-        f.addView(tvBuildRes)
-        s.addView(f)
-        b.setOnClickListener {
-            val g = spVal(spBuildGroup)
-            if (g.isEmpty()) return@setOnClickListener
-            val tids = mutableListOf<Int>()
-            for (i in 0 until boxBuildProducts.childCount) {
-                val c = boxBuildProducts.getChildAt(i) as? CheckBox ?: continue
-                if (c.isChecked) tids.add(c.tag as Int)
+        // ط§ع¯ط± ط®ط§ظ„غŒ ط¨ظˆط¯
+        if (cacheCampaigns.length() == 0) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val campaigns = JSONArray(getAuth("queue"))
+                    cacheCampaigns = campaigns
+                    runOnUiThread { showChatsTab() }
+                } catch (_: Exception) {}
             }
-            tvBuildRes.setTextColor(GRAY); tvBuildRes.text = "در حال ساخت…"
-            io {
-                val r = postAuth("build-queue", JSONObject()
-                    .put("group_id", g.toInt())
-                    .put("template_id", spVal(spBuildTemplate).toIntOrNull() ?: 0)
-                    .put("manual_body", etBuildBody.text.toString())
-                    .put("product_ids", JSONArray(tids)))
-                ui { tvBuildRes.setTextColor(GREEN); tvBuildRes.text = "✅ ${JSONObject(r).optInt("queued")} پیام در صف قرار گرفت" }
+            list.addView(lbl("ط¯ط± ط­ط§ظ„ ط¨ط§ط±ع¯ط°ط§ط±غŒ...", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
+        } else {
+            // ظ†ظ…ط§غŒط´ ظ‡ط± ع©ظ…ظ¾غŒظ† ظ…ط«ظ„ غŒع© ع†طھ ظˆط§طھط³ط§ظ¾
+            for (i in cacheCampaigns.length() - 1 downTo 0) {
+                try {
+                    val c = cacheCampaigns.getJSONObject(i)
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(dp(12), dp(12), dp(12), dp(12))
+                        gravity = Gravity.CENTER_VERTICAL
+                        setBackgroundColor(if (i % 2 == 0) WHITE else GRAY_100)
+                        isClickable = true
+                    }
+                    val avatar = TextView(this).apply {
+                        text = c.optString("title", "ع©ظ…ظ¾غŒظ†").take(1)
+                        gravity = Gravity.CENTER; setTextColor(WHITE); textSize = 18f
+                        background = rounded(if (c.optString("status") == "sent") WA_LIGHT_GREEN else ORANGE, 24)
+                        layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+                    }
+                    val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(12), 0); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
+                    val title = lbl(c.optString("title", "ع©ظ…ظ¾غŒظ† #${c.optInt("id")}"), 15f, true)
+                    val preview = lbl(c.optString("body", c.optString("message", "")).take(40) + "...", 13f, false, GRAY_500)
+                    val time = lbl(c.optString("created_at", "").take(10), 11f, false, GRAY_500)
+                    mid.addView(title); mid.addView(preview)
+
+                    val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END }
+                    right.addView(time)
+                    val statusIcon = lbl(
+                        when (c.optString("status")) {
+                            "sent" -> "âœ“âœ“"; "sending" -> "âœ“"; "pending" -> "â—·"; else -> "â€¢"
+                        }, 12f, false, if (c.optString("status") == "sent") Color.parseColor("#53BDEB") else GRAY_500
+                    )
+                    right.addView(statusIcon)
+
+                    row.addView(avatar); row.addView(mid); row.addView(right)
+                    row.setOnClickListener { showCampaignDetail(c) }
+                    list.addView(row)
+
+                    // ط®ط· ط¬ط¯ط§ع©ظ†ظ†ط¯ظ‡
+                    list.addView(View(this).apply { setBackgroundColor(Color.parseColor("#E9EDEF")); layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { setMargins(dp(72), 0, 0, 0) } })
+                } catch (_: Exception) {}
+            }
+            if (cacheCampaigns.length() == 0) {
+                list.addView(lbl("ظ‡ظ†ظˆط² ظ¾غŒط§ظ…غŒ ظ†ظپط±ط³طھط§ط¯غŒ\nط±ظˆغŒ + ط¨ط²ظ† طھط§ ط§ظˆظ„غŒظ† ع©ظ…ظ¾غŒظ† ط±ظˆ ط¨ط³ط§ط²غŒ", 14f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(40), dp(16), dp(16)) })
             }
         }
-    }
 
-    // ----- صف -----
-    fun buildQueue() {
-        val s = screen("queue")
-        s.addView(backBtn())
-        val f = card()
-        f.addView(lbl("📋 صف ارسال", 16f, true))
-        tvQueueStats = lbl("", 12.5f, false, GRAY)
-        f.addView(tvQueueStats)
-        val b1 = btnPrimary("🔄 بروزرسانی")
-        val b2 = btnGhost("پاک کردن کل صف")
-        b2.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        f.addView(b1); f.addView(b2)
-        s.addView(f)
-        boxQueue = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val l = card(); l.addView(boxQueue)
-        s.addView(l)
-        b1.setOnClickListener { loadQueueTab() }
-        b2.setOnClickListener { io { postAuth("queue/clear", JSONObject()); ui { loadQueueTab() } } }
-    }
+        scroll.addView(list)
+        mainContent.addView(scroll)
 
-    fun show(key: String) {
-        cur = key
-        for ((k, v) in screens) v.visibility = if (k == key) View.VISIBLE else View.GONE
-        when (key) {
-            "home" -> refreshHome()
-            "groups" -> loadGroups()
-            "contacts" -> { loadGroupsTo(listOf(spContactGroup, spImportGroup)); loadContacts() }
-            "products" -> loadProducts()
-            "templates" -> loadTemplates()
-            "build" -> loadBuildTab()
-            "queue" -> loadQueueTab()
+        // ط¢ظ…ط§ط± ط¨ط§ظ„ط§ ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾
+        scope.launch(Dispatchers.IO) {
+            try {
+                val counts = JSONObject(getAuth("queue/counts"))
+                runOnUiThread {
+                    tvTopSub.text = "ط¯ط± ط§ظ†طھط¸ط§ط±: ${counts.optInt("pending")} â€¢ ط§ط±ط³ط§ظ„غŒ: ${counts.optInt("sent")}"
+                }
+            } catch (_: Exception) {}
         }
     }
 
-    // ---------- شبکه - فیکس شده با UTF-8 و Bearer ----------
-    fun io(block: () -> Unit): Job = scope.launch(Dispatchers.IO) {
-        try { block() } catch (e: Exception) { runOnUiThread { appendStat("خطا: ${friendly(e)}") } }
+    fun showCampaignDetail(c: JSONObject) {
+        mainContent.removeAllViews()
+        tvTopTitle.text = c.optString("title", "ط¬ط²ط¦غŒط§طھ")
+        val scroll = ScrollView(this)
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)) }
+        col.addView(lbl("ظ…طھظ† ظ¾غŒط§ظ…:", 13f, true))
+        col.addView(lbl(c.optString("body", c.optString("message", "")), 14f).apply {
+            background = rounded(GRAY_100, 12); setPadding(dp(12), dp(12), dp(12), dp(12))
+            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            p.setMargins(0, dp(8), 0, dp(16)); layoutParams = p
+        })
+        col.addView(lbl("ظˆط¶ط¹غŒطھ: ${c.optString("status")} â€¢ ${c.optString("receiver", "")}", 12f, false, GRAY_500))
+        val btnBack = Button(this).apply { text = "ط¨ط§ط²ع¯ط´طھ"; background = roundedBorder(WHITE, 12, 1, GRAY_200); setTextColor(GRAY_500) }
+        btnBack.setOnClickListener { showChatsTab() }
+        col.addView(btnBack)
+        scroll.addView(col)
+        mainContent.addView(scroll)
     }
-    fun ui(block: () -> Unit) = runOnUiThread(block)
-    fun appendLog(s: String) = runOnUiThread { log.append(s) }
-    fun appendStat(s: String) { Toast.makeText(this, s.take(200), Toast.LENGTH_SHORT).show() }
-    
-    fun friendly(e: Exception): String {
-        val m = e.message ?: "خطا"
-        // دیکود کردن \uXXXX به فارسی
-        return try {
-            // اگر پیام شامل \u بود، دیکود کن
-            if (m.contains("\\u")) {
-                val decoded = decodeUnicode(m)
-                decoded.take(300)
-            } else {
-                // سعی کن message را از JSON بکشی
-                val i = m.indexOf("\"message\":\"")
-                if (i >= 0) { 
-                    val sub = m.substring(i + 11)
-                    val j = sub.indexOf("\"")
-                    if (j > 0) {
-                        val msg = sub.substring(0, j).replace("\\/", "/")
-                        decodeUnicode(msg)
-                    } else m.take(200)
-                } else m.take(200)
-            }
-        } catch (_: Exception) {
-            m.take(200)
+
+    // ==================== TAB 2: CONTACTS - ط¨ط§ ع†غŒظ¾ ظپغŒظ„طھط± ====================
+    fun showContactsTab() {
+        mainContent.removeAllViews()
+        tvTopTitle.text = "ظ…ط®ط§ط·ط¨غŒظ†"
+        tvTopSub.text = "ظ‡ظ…ظ‡ ظ…ط®ط§ط·ط¨غŒظ†"
+
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        // ط³ط±ع† ط¨ط§ط±
+        val search = EditText(this).apply {
+            hint = "ط¬ط³طھط¬ظˆغŒ ظ†ط§ظ… غŒط§ ط´ظ…ط§ط±ظ‡..."
+            background = rounded(GRAY_200, 24)
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            p.setMargins(dp(12), dp(8), dp(12), dp(8)); layoutParams = p
         }
-    }
-    
-    fun decodeUnicode(input: String): String {
-        // تبدیل \u0647 به حرف فارسی
-        var out = input
-        try {
-            val regex = Regex("\\\\u([0-9a-fA-F]{4})")
-            out = regex.replace(out) { match ->
-                val code = match.groupValues[1].toInt(16)
-                code.toChar().toString()
+
+        // ع†غŒظ¾â€Œظ‡ط§غŒ ع¯ط±ظˆظ‡ - ظ…ط«ظ„ ظپغŒظ„طھط± ظˆط§طھط³ط§ظ¾
+        val chipScroll = HorizontalScrollView(this)
+        val chipContainer = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), dp(4), dp(8), dp(4)) }
+
+        fun addChip(name: String, id: Int, active: Boolean = false) {
+            val chip = TextView(this).apply {
+                text = name; textSize = 13f
+                setPadding(dp(14), dp(8), dp(14), dp(8))
+                background = if (active) rounded(WA_GREEN_DARK, 20) else roundedBorder(WHITE, 20, 1, Color.parseColor("#E0E0E0"))
+                setTextColor(if (active) WHITE else BLACK)
+                val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                p.setMargins(dp(4), 0, dp(4), 0); layoutParams = p
+                isClickable = true
+                setOnClickListener { filterContactsByGroup(id, name) }
             }
-        } catch (_: Exception) {}
-        return out
+            chipContainer.addView(chip)
+        }
+
+        chipContainer.removeAllViews()
+        addChip("ظ‡ظ…ظ‡", -1, true)
+        for (i in 0 until cacheGroups.length()) {
+            try {
+                val g = cacheGroups.getJSONObject(i)
+                addChip(g.getString("name"), g.getInt("id"))
+            } catch (_: Exception) {}
+        }
+        if (cacheGroups.length() == 0) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    cacheGroups = JSONArray(getAuth("groups"))
+                    runOnUiThread { showContactsTab() }
+                } catch (_: Exception) {}
+            }
+        }
+        chipScroll.addView(chipContainer)
+
+        // ظ„غŒط³طھ ظ…ط®ط§ط·ط¨غŒظ†
+        val scroll = ScrollView(this)
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        fun renderContacts(filterGroup: Int = -1, searchText: String = "") {
+            list.removeAllViews()
+            var count = 0
+            for (i in 0 until cacheContacts.length()) {
+                try {
+                    val c = cacheContacts.getJSONObject(i)
+                    if (filterGroup != -1 && c.optInt("group_id", -1) != filterGroup) continue
+                    if (searchText.isNotEmpty()) {
+                        val name = c.optString("name", ""); val mobile = c.optString("mobile", "")
+                        if (!name.contains(searchText, true) && !mobile.contains(searchText)) continue
+                    }
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL; setPadding(dp(12), dp(10), dp(12), dp(10)); gravity = Gravity.CENTER_VERTICAL
+                    }
+                    val av = TextView(this).apply {
+                        text = c.optString("name", "?").take(1).uppercase()
+                        gravity = Gravity.CENTER; setTextColor(WHITE); textSize = 14f
+                        background = rounded(Color.parseColor("#${Integer.toHexString((c.optString("mobile", "0").hashCode() and 0xFFFFFF) or 0x808080)}"), 20)
+                        layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+                    }
+                    val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
+                    mid.addView(lbl(c.optString("name", "ط¨ط¯ظˆظ† ظ†ط§ظ…"), 14f, true))
+                    mid.addView(lbl(c.optString("mobile", ""), 12f, false, GRAY_500))
+                    row.addView(av); row.addView(mid)
+                    list.addView(row)
+                    count++
+                    if (count > 100) break
+                } catch (_: Exception) {}
+            }
+            if (count == 0) list.addView(lbl("ظ…ط®ط§ط·ط¨غŒ غŒط§ظپطھ ظ†ط´ط¯", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
+        }
+
+        // ظ„ظˆط¯ ظ…ط®ط§ط·ط¨غŒظ†
+        if (cacheContacts.length() == 0) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    cacheContacts = JSONArray(getAuth("contacts"))
+                    runOnUiThread { renderContacts() }
+                } catch (_: Exception) {}
+            }
+        } else {
+            renderContacts()
+        }
+
+        search.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) { renderContacts(searchText = s.toString()) }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+
+        scroll.addView(list)
+        container.addView(search); container.addView(chipScroll); container.addView(scroll)
+        mainContent.addView(container)
     }
 
-    fun authUrl(path: String): String {
-        // هم query param (برای سازگاری قدیمی) هم Bearer header (امن)
-        val tk = URLEncoder.encode(apiToken, "UTF-8")
-        return "$siteUrl/wp-json/smsp1/v1/$path?user_id=$userId&api_token=$tk"
-    }
-    
-    fun authUrlNew(path: String): String {
-        val tk = URLEncoder.encode(apiToken, "UTF-8")
-        return "$siteUrl/wp-json/mn-sms/v1/$path?user_id=$userId&api_token=$tk"
+    fun filterContactsByGroup(groupId: Int, groupName: String) {
+        tvTopSub.text = if (groupId == -1) "ظ‡ظ…ظ‡ ظ…ط®ط§ط·ط¨غŒظ†" else "ع¯ط±ظˆظ‡: $groupName"
+        // ط¯ظˆط¨ط§ط±ظ‡ ط±ظ†ط¯ط± ط¨ط§ ظپغŒظ„طھط± - ط³ط§ط¯ظ‡
+        showContactsTab()
     }
 
-    fun postJsonRaw(urlStr: String, payload: JSONObject): String {
+    // ==================== TAB 3: CATALOG ====================
+    fun showCatalogTab() {
+        mainContent.removeAllViews()
+        tvTopTitle.text = "ع©ط§طھط§ظ„ظˆع¯"
+        tvTopSub.text = "ظ…ط­طµظˆظ„ط§طھ ظˆ ظ‚ط§ظ„ط¨â€Œظ‡ط§"
+
+        val tabRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(GRAY_100) }
+        val tabProd = Button(this).apply { text = "ظ…ط­طµظˆظ„ط§طھ"; background = rounded(WHITE, 0); setTextColor(WA_GREEN_DARK); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
+        val tabTpl = Button(this).apply { text = "ظ‚ط§ظ„ط¨â€Œظ‡ط§"; background = rounded(GRAY_100, 0); setTextColor(GRAY_500); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
+        tabRow.addView(tabProd); tabRow.addView(tabTpl)
+
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f) }
+
+        fun showProducts() {
+            content.removeAllViews()
+            val scroll = ScrollView(this)
+            val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+            var row: LinearLayout? = null
+            for (i in 0 until cacheProducts.length()) {
+                if (i % 2 == 0) {
+                    row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                    grid.addView(row)
+                }
+                try {
+                    val p = cacheProducts.getJSONObject(i)
+                    val card = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        background = rounded(WHITE, 12)
+                        setPadding(dp(12), dp(12), dp(12), dp(12))
+                        val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        lp.setMargins(dp(4), dp(4), dp(4), dp(4)); layoutParams = lp
+                    }
+                    card.addView(lbl(p.optString("title", ""), 14f, true))
+                    card.addView(lbl(p.optString("price", "") + " طھظˆظ…ط§ظ†", 12f, false, ORANGE))
+                    row?.addView(card)
+                } catch (_: Exception) {}
+            }
+            if (cacheProducts.length() == 0) {
+                scope.launch(Dispatchers.IO) {
+                    try { cacheProducts = JSONArray(getAuth("products")); runOnUiThread { showProducts() } } catch (_: Exception) {}
+                }
+                grid.addView(lbl("ظ…ط­طµظˆظ„غŒ ظ†غŒط³طھ", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
+            }
+            scroll.addView(grid); content.addView(scroll)
+        }
+
+        fun showTemplates() {
+            content.removeAllViews()
+            val scroll = ScrollView(this)
+            val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(12), dp(12), dp(12)) }
+            for (i in 0 until cacheTemplates.length()) {
+                try {
+                    val t = cacheTemplates.getJSONObject(i)
+                    val card = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        background = rounded(WHITE, 12)
+                        setPadding(dp(12), dp(12), dp(12), dp(12))
+                        val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                        p.setMargins(0, 0, 0, dp(8)); layoutParams = p
+                    }
+                    card.addView(lbl(t.optString("title", ""), 14f, true))
+                    card.addView(lbl(t.optString("body", "").take(80), 12f, false, GRAY_500))
+                    list.addView(card)
+                } catch (_: Exception) {}
+            }
+            if (cacheTemplates.length() == 0) {
+                scope.launch(Dispatchers.IO) {
+                    try { cacheTemplates = JSONArray(getAuth("templates")); runOnUiThread { showTemplates() } } catch (_: Exception) {}
+                }
+            }
+            scroll.addView(list); content.addView(scroll)
+        }
+
+        tabProd.setOnClickListener {
+            tabProd.setBackgroundColor(WHITE); tabProd.setTextColor(WA_GREEN_DARK)
+            tabTpl.setBackgroundColor(GRAY_100); tabTpl.setTextColor(GRAY_500)
+            showProducts()
+        }
+        tabTpl.setOnClickListener {
+            tabTpl.setBackgroundColor(WHITE); tabTpl.setTextColor(WA_GREEN_DARK)
+            tabProd.setBackgroundColor(GRAY_100); tabProd.setTextColor(GRAY_500)
+            showTemplates()
+        }
+
+        mainContent.addView(tabRow); mainContent.addView(content)
+        showProducts()
+    }
+
+    // ==================== NEW MESSAGE SHEET - ظپظ„ظˆ ط³ط§ط¯ظ‡ 1 طµظپط­ظ‡â€Œط§غŒ ====================
+    fun showNewMessageSheet() {
+        // غŒع© BottomSheet ط³ط§ط¯ظ‡ - ط¨ظ‡ ط¬ط§غŒ 4 طµظپط­ظ‡ ط¬ط¯ط§طŒ ظ‡ظ…ظ‡ ط¯ط± غŒع© طµظپط­ظ‡
+        mainContent.removeAllViews()
+        tvTopTitle.text = "ط§ط±ط³ط§ظ„ ط¬ط¯غŒط¯"
+        tvTopSub.text = "ط§ظ†طھط®ط§ط¨ ع¯ط±ظˆظ‡ ظˆ ظ†ظˆط´طھظ† ظ¾غŒط§ظ…"
+
+        val scroll = ScrollView(this)
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)) }
+
+        // ظ…ط±ط­ظ„ظ‡ 1: ط§ظ†طھط®ط§ط¨ ع¯ط±ظˆظ‡â€Œظ‡ط§ (ع†غŒظ¾ ع†ظ†ط¯ ط§ظ†طھط®ط§ط¨غŒ)
+        col.addView(lbl("غ±. ع¯ط±ظˆظ‡â€Œظ‡ط§غŒ ظ…ط®ط§ط·ط¨ ط±ط§ ط§ظ†طھط®ط§ط¨ ع©ظ†:", 14f, true))
+        val groupChipContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(16)) }
+        val selectedGroups = mutableSetOf<Int>()
+        for (i in 0 until cacheGroups.length()) {
+            try {
+                val g = cacheGroups.getJSONObject(i)
+                val check = CheckBox(this).apply {
+                    text = "${g.getString("name")} (ID:${g.getInt("id")})"
+                    tag = g.getInt("id")
+                    setOnCheckedChangeListener { _, checked ->
+                        if (checked) selectedGroups.add(g.getInt("id")) else selectedGroups.remove(g.getInt("id"))
+                    }
+                }
+                groupChipContainer.addView(check)
+            } catch (_: Exception) {}
+        }
+        col.addView(groupChipContainer)
+
+        // ظ…ط±ط­ظ„ظ‡ 2: ظ‚ط§ظ„ط¨ ط³ط±غŒط¹
+        col.addView(lbl("غ². ظ‚ط§ظ„ط¨ ط¢ظ…ط§ط¯ظ‡ (ط§ط®طھغŒط§ط±غŒ):", 14f, true))
+        val tplSpinner = Spinner(this)
+        val tplItems = mutableListOf("ط¨ط¯ظˆظ† ظ‚ط§ظ„ط¨ - ظ…طھظ† ط¯ط³طھغŒ")
+        for (i in 0 until cacheTemplates.length()) {
+            try { tplItems.add(cacheTemplates.getJSONObject(i).getString("title")) } catch (_: Exception) {}
+        }
+        tplSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, tplItems)
+        col.addView(tplSpinner)
+
+        // ظ…ط±ط­ظ„ظ‡ 3: ظ…طھظ† ظ¾غŒط§ظ…
+        col.addView(lbl("غ³. ظ…طھظ† ظ¾غŒط§ظ…:", 14f, true).apply { val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(16), 0, 0); layoutParams = p })
+        val etBody = EditText(this).apply {
+            hint = "ط³ظ„ط§ظ… {ظ†ط§ظ…} ط¹ط²غŒط²...\n{ظ„غŒط³طھ_ظ‚غŒظ…طھ}"
+            background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            minLines = 4
+        }
+        col.addView(etBody)
+
+        tplSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
+                if (pos > 0 && pos - 1 < cacheTemplates.length()) {
+                    try { etBody.setText(cacheTemplates.getJSONObject(pos - 1).getString("body")) } catch (_: Exception) {}
+                }
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+
+        // ظ…ط±ط­ظ„ظ‡ 4: ظ…ط­طµظˆظ„ط§طھ
+        col.addView(lbl("غ´. ظ…ط­طµظˆظ„ط§طھ (ط§ط®طھغŒط§ط±غŒ):", 14f, true).apply { val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(16), 0, 0); layoutParams = p })
+        val prodContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val selectedProducts = mutableSetOf<Int>()
+        for (i in 0 until cacheProducts.length()) {
+            try {
+                val p = cacheProducts.getJSONObject(i)
+                val cb = CheckBox(this).apply {
+                    text = p.getString("title")
+                    tag = p.getInt("id")
+                    setOnCheckedChangeListener { _, checked -> if (checked) selectedProducts.add(p.getInt("id")) else selectedProducts.remove(p.getInt("id")) }
+                }
+                prodContainer.addView(cb)
+            } catch (_: Exception) {}
+        }
+        col.addView(prodContainer)
+
+        val tvResult = lbl("", 13f, true, WA_GREEN_DARK).apply { setPadding(0, dp(16), 0, 0) }
+        val btnSend = Button(this).apply {
+            text = "ًں“¤ ط³ط§ط®طھ طµظپ ظˆ ط§ط±ط³ط§ظ„"; setTextColor(WHITE); background = rounded(WA_LIGHT_GREEN, 24)
+            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(20), 0, 0); layoutParams = p
+        }
+
+        btnSend.setOnClickListener {
+            if (selectedGroups.isEmpty()) { tvResult.text = "غŒع© ع¯ط±ظˆظ‡ ط§ظ†طھط®ط§ط¨ ع©ظ†"; tvResult.setTextColor(Color.RED); return@setOnClickListener }
+            if (etBody.text.toString().trim().isEmpty()) { tvResult.text = "ظ…طھظ† ظ¾غŒط§ظ… ط±ط§ ط¨ظ†ظˆغŒط³"; tvResult.setTextColor(Color.RED); return@setOnClickListener }
+            tvResult.text = "ط¯ط± ط­ط§ظ„ ط³ط§ط®طھ طµظپ..."; tvResult.setTextColor(GRAY_500)
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val res = postJson(getAuthUrl("build-queue"), JSONObject()
+                        .put("group_id", selectedGroups.first())
+                        .put("template_id", 0)
+                        .put("manual_body", etBody.text.toString())
+                        .put("product_ids", JSONArray(selectedProducts.toList())))
+                    val obj = JSONObject(res)
+                    val queued = obj.optInt("queued", 0)
+                    runOnUiThread {
+                        tvResult.text = "âœ… $queued ظ¾غŒط§ظ… ط¯ط± طµظپ ظ‚ط±ط§ط± ع¯ط±ظپطھ. ط§ط±ط³ط§ظ„ ط®ظˆط¯ع©ط§ط± ط´ط±ظˆط¹ ط´ط¯."
+                        tvResult.setTextColor(WA_GREEN_DARK)
+                        // ط¢ظ¾ط¯غŒطھ ع©ط´
+                        cacheCampaigns = JSONArray() // force reload
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread { tvResult.text = "ط®ط·ط§: ${e.message?.take(100)}"; tvResult.setTextColor(Color.RED) }
+                }
+            }
+        }
+
+        val btnBack = Button(this).apply { text = "ط¨ط§ط²ع¯ط´طھ"; background = roundedBorder(WHITE, 12, 1, GRAY_200); setTextColor(GRAY_500); val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(12), 0, 0); layoutParams = p }
+        btnBack.setOnClickListener { showWhatsAppMain() }
+
+        col.addView(tvResult); col.addView(btnSend); col.addView(btnBack)
+        scroll.addView(col)
+        mainContent.addView(scroll)
+    }
+
+    // ==================== NETWORK - ط¨ط§ UTF-8 ====================
+    fun getAuthUrl(path: String) = "$siteUrl/wp-json/smsp1/v1/$path?user_id=$userId&api_token=${URLEncoder.encode(apiToken, "UTF-8")}"
+
+    fun postJson(urlStr: String, payload: JSONObject): String {
         val c = (URL(urlStr).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; doOutput = true
             connectTimeout = 20000; readTimeout = 20000
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Authorization", "Bearer $apiToken") // جدید امن
-            setRequestProperty("X-API-TOKEN", apiToken)
+            setRequestProperty("Authorization", "Bearer $apiToken")
         }
         try {
             c.outputStream.write(payload.toString().toByteArray(Charsets.UTF_8))
             val code = c.responseCode
-            val stream = if (code in 200..299) c.inputStream else c.errorStream
-            val text = stream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) {
-                throw Exception("سرور $code: $text")
-            }
+            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
+            if (code !in 200..299) throw Exception("ط³ط±ظˆط± $code: $text")
             return text
         } finally { c.disconnect() }
     }
-    
+
     fun getAuth(path: String): String {
-        // تلاش با هر دو namespace
-        try {
-            return getAuthInternal(authUrl(path))
-        } catch (e: Exception) {
-            if (e.message?.contains("404") == true || e.message?.contains("هیچ مسیری") == true) {
-                // fallback به mn-sms
-                return getAuthInternal(authUrlNew(path.replace("groups","contact-groups").replace("queue/counts","sms/pending")))
-            }
-            throw e
-        }
-    }
-    
-    fun getAuthInternal(urlStr: String): String {
-        val c = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+        val c = (URL(getAuthUrl(path)).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20000; readTimeout = 20000
-            setRequestProperty("Accept", "application/json; charset=utf-8")
-            setRequestProperty("Authorization", "Bearer $apiToken")
-        }
-        try {
-            val code = c.responseCode
-            val stream = if (code in 200..299) c.inputStream else c.errorStream
-            val text = stream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) {
-                throw Exception("سرور $code: $text")
-            }
-            return text
-        } finally { c.disconnect() }
-    }
-    
-    fun getCounts(): JSONObject = try { JSONObject(getAuth("queue/counts")) } catch (_: Exception) { JSONObject() }
-    fun postAuth(path: String, payload: JSONObject): String = postJsonRaw(authUrl(path), payload)
-    fun delAuth(path: String): String {
-        val c = (URL(authUrl(path)).openConnection() as HttpURLConnection).apply {
-            requestMethod = "DELETE"; connectTimeout = 20000; readTimeout = 20000
             setRequestProperty("Authorization", "Bearer $apiToken")
         }
         try {
             val code = c.responseCode
             val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) throw Exception("سرور $code: $text")
+            if (code !in 200..299) throw Exception("ط³ط±ظˆط± $code: $text")
             return text
         } finally { c.disconnect() }
     }
 
-    // ---------- لودرها ----------
-    fun listRow(txt: String, onDel: (() -> Unit)? = null): LinearLayout {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val tv = lbl(txt, 13.5f)
-        tv.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        row.addView(tv)
-        if (onDel != null) {
-            val del = btnGhost("حذف")
-            del.setOnClickListener { io { onDel(); ui { show(curTab()) } } }
-            row.addView(del)
-        }
-        row.setPadding(0, dp(6), 0, dp(6))
-        return row
-    }
-    var cur = "home"
-    fun curTab(): String = cur
-    fun loadGroups(): Job = io {
-        cacheGroups = JSONArray(getAuth("groups"))
-        ui {
-            boxGroups.removeAllViews()
-            for (i in 0 until cacheGroups.length()) {
-                val g = cacheGroups.getJSONObject(i)
-                val id = g.getInt("id")
-                boxGroups.addView(listRow("${g.getString("name")} (#$id)") { delAuth("groups/$id"); loadGroups() })
+    // ط§ط±ط³ط§ظ„ ط®ظˆط¯ع©ط§ط± ط¯ط± ظ¾ط³â€Œط²ظ…غŒظ†ظ‡
+    fun startAutoSender() {
+        sendJob?.cancel()
+        sendJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    val batch = fetchQueue(5)
+                    if (batch.isEmpty()) { delay(15000); continue }
+                    for (m in batch) {
+                        if (!isActive) break
+                        val ok = sendSms(m.to, m.body)
+                        updateStatus(m.id, if (ok) "sent" else "failed")
+                        delay(4000)
+                    }
+                } catch (_: Exception) { delay(15000) }
             }
-            if (cacheGroups.length() == 0) boxGroups.addView(lbl("هنوز گروهی نساختی", 13f, false, GRAY))
-        }
-    }
-    fun spVal(sp: Spinner): String {
-        val s = sp.selectedItem as? String ?: return ""
-        val id = s.substringBefore(" #")
-        return if (id.all { it.isDigit() } && id.isNotEmpty()) id else ""
-    }
-    fun loadGroupsTo(sps: List<Spinner>): Job = io {
-        if (cacheGroups.length() == 0) cacheGroups = JSONArray(getAuth("groups"))
-        val items = (0 until cacheGroups.length()).map {
-            val g = cacheGroups.getJSONObject(it); "${g.getInt("id")} # ${g.getString("name")}"
-        }
-        ui { for (sp in sps) sp.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, items).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) } }
-    }
-    fun loadContacts(): Job = io {
-        val arr = JSONArray(getAuth("contacts"))
-        ui {
-            boxContacts.removeAllViews()
-            for (i in maxOf(0, arr.length() - 50) until arr.length()) {
-                val c = arr.getJSONObject(i)
-                boxContacts.addView(lbl("• ${c.optString("name")} — ${c.getString("mobile")}", 13f))
-            }
-            if (arr.length() == 0) boxContacts.addView(lbl("مخاطبی نیست", 13f, false, GRAY))
-        }
-    }
-    fun loadProducts(): Job = io {
-        cacheProducts = JSONArray(getAuth("products"))
-        ui {
-            boxProducts.removeAllViews()
-            for (i in 0 until cacheProducts.length()) {
-                val p = cacheProducts.getJSONObject(i)
-                val id = p.getInt("id")
-                boxProducts.addView(listRow("${p.getString("title")} : ${p.optString("price")}") { delAuth("products/$id"); loadProducts() })
-            }
-            if (cacheProducts.length() == 0) boxProducts.addView(lbl("محصولی نیست", 13f, false, GRAY))
-        }
-    }
-    fun loadTemplates(): Job = io {
-        cacheTemplates = JSONArray(getAuth("templates"))
-        ui {
-            boxTemplates.removeAllViews()
-            for (i in 0 until cacheTemplates.length()) {
-                val t = cacheTemplates.getJSONObject(i)
-                boxTemplates.addView(lbl("• ${t.getString("title")}", 13.5f))
-            }
-            if (cacheTemplates.length() == 0) boxTemplates.addView(lbl("قالبی نیست", 13f, false, GRAY))
-        }
-    }
-    fun loadBuildTab(): Job = io {
-        if (cacheGroups.length() == 0) cacheGroups = JSONArray(getAuth("groups"))
-        if (cacheTemplates.length() == 0) cacheTemplates = JSONArray(getAuth("templates"))
-        if (cacheProducts.length() == 0) cacheProducts = JSONArray(getAuth("products"))
-        ui {
-            val gi = (0 until cacheGroups.length()).map { val g = cacheGroups.getJSONObject(it); "${g.getInt("id")} # ${g.getString("name")}" }
-            spBuildGroup.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, gi).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-            val ti = mutableListOf("0 # — بدون قالب —")
-            for (i in 0 until cacheTemplates.length()) { val t = cacheTemplates.getJSONObject(i); ti.add("${t.getInt("id")} # ${t.getString("title")}") }
-            spBuildTemplate.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, ti).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-            boxBuildProducts.removeAllViews()
-            for (i in 0 until cacheProducts.length()) {
-                val p = cacheProducts.getJSONObject(i)
-                boxBuildProducts.addView(CheckBox(this).apply { text = p.getString("title"); tag = p.getInt("id"); isChecked = true })
-            }
-        }
-    }
-    fun loadQueueTab(): Job = io {
-        val c = getCounts()
-        val arr = JSONArray(getAuth("queue"))
-        ui {
-            tvQueueStats.text = "در انتظار: ${c.optInt("pending")} • در حال ارسال: ${c.optInt("sending")} • موفق: ${c.optInt("sent")} • ناموفق: ${c.optInt("failed")}\nوارد شده: $username (کاربر $userId) | سایت: $siteUrl"
-            boxQueue.removeAllViews()
-            for (i in maxOf(0, arr.length() - 30) until arr.length()) {
-                val q = arr.getJSONObject(i)
-                boxQueue.addView(lbl("#${q.getInt("id")} ${q.getString("receiver")} — ${q.getString("status")}", 12.5f))
-            }
-            if (arr.length() == 0) boxQueue.addView(lbl("صف خالی است", 12.5f, false, GRAY))
         }
     }
 
-    // ---------- فایل ----------
-    fun openPicker() {
-        val it = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"; putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel")) }
-        @Suppress("DEPRECATION") startActivityForResult(it, REQ_FILE)
-    }
-    @Deprecated("legacy picker")
-    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
-        super.onActivityResult(req, res, data)
-        if (req == REQ_FILE && res == Activity.RESULT_OK) {
-            pickedUri = data?.data
-            pickedName = pickedUri?.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "file.csv"
-            if (!pickedName.contains(".")) pickedName += ".csv"
-            val t = "انتخاب شد: $pickedName"
-            if (pickMode == "contacts") tvPickC.text = t else tvPickP.text = t
-        }
-    }
-    fun uploadAuth(path: String, fields: Map<String, String>, uri: Uri, fname: String): String {
-        val b = "----smsp1${System.currentTimeMillis()}"
-        val c = (URL(authUrl(path)).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"; doOutput = true
-            connectTimeout = 30000; readTimeout = 60000
-            setRequestProperty("Content-Type", "multipart/form-data; boundary=$b")
-            setRequestProperty("Authorization", "Bearer $apiToken")
-        }
-        val out = DataOutputStream(c.outputStream)
-        fun field(k: String, v: String) { out.writeBytes("--$b\r\nContent-Disposition: form-data; name=\"$k\"\r\n\r\n$v\r\n") }
-        for ((k, v) in fields) field(k, v)
-        out.writeBytes("--$b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$fname\"\r\nContent-Type: application/octet-stream\r\n\r\n")
-        contentResolver.openInputStream(uri)?.use { it.copyTo(out) }
-        out.writeBytes("\r\n--$b--\r\n"); out.flush(); out.close()
-        val code = c.responseCode
-        val txt = try { (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: "" } catch (_: Exception) { "" }
-        c.disconnect()
-        if (code !in 200..299) throw Exception("سرور $code: ${txt.take(300)}")
-        return txt.take(200)
-    }
-
-    // ---------- ارسال با سیم‌کارت - نسخه مدرن ----------
-    override fun onDestroy() { sendJob?.cancel(); scope.cancel(); super.onDestroy() }
-    suspend fun pollLoop() {
-        while (currentCoroutineContext().isActive) {
-            try {
-                val batch = fetchQueue(10)
-                if (batch.isEmpty()) { appendLog("صفی نیست، 15 ثانیه صبر...\n"); delay(15000); continue }
-                for (m in batch) {
-                    if (!currentCoroutineContext().isActive) break
-                    val ok = sendSms(m.to, m.body)
-                    updateStatus(m.id, if (ok) "sent" else "failed")
-                    appendLog((if (ok) "✅" else "❌") + " ${m.to}\n")
-                    delay(4000) // فاصله بین پیامک‌ها برای جلوگیری از اسپم شناخته شدن
-                }
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { appendLog("خطا: ${friendly(e)}\n"); delay(15000) }
-        }
-    }
     data class Msg(val id: Int, val to: String, val body: String)
     fun fetchQueue(limit: Int): List<Msg> {
-        val t = postJsonRaw(authUrl("queue/fetch"), JSONObject().put("limit", limit))
+        val t = postJson(getAuthUrl("queue/fetch"), JSONObject().put("limit", limit))
         val arr = JSONArray(t)
         return (0 until arr.length()).map { val o = arr.getJSONObject(it); Msg(o.getInt("id"), o.getString("receiver"), o.getString("body")) }
     }
-    fun updateStatus(id: Int, status: String) {
-        postJsonRaw(authUrl("queue/update"), JSONObject().put("id", id).put("status", status))
-    }
+    fun updateStatus(id: Int, status: String) { postJson(getAuthUrl("queue/update"), JSONObject().put("id", id).put("status", status)) }
     suspend fun sendSms(to: String, body: String): Boolean = withContext(Dispatchers.Main) {
         if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return@withContext false
         return@withContext try {
-            val sm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                this@MainActivity.getSystemService(SmsManager::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                SmsManager.getDefault()
-            }
-            val parts = sm.divideMessage(body)
-            sm.sendMultipartTextMessage(to, null, parts, null, null)
+            val sm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) getSystemService(SmsManager::class.java) else @Suppress("DEPRECATION") SmsManager.getDefault()
+            sm.sendMultipartTextMessage(to, null, sm.divideMessage(body), null, null)
             true
-        } catch (e: Exception) { 
-            appendLog("خطا ارسال به $to: ${e.message}\n")
-            false 
-        }
+        } catch (_: Exception) { false }
     }
+
+    fun showSearchDialog() { Toast.makeText(this, "ط¬ط³طھط¬ظˆ: ط¯ط± طھط¨ ظ…ط®ط§ط·ط¨غŒظ† ط³ط±ع† ع©ظ†", Toast.LENGTH_SHORT).show() }
+    fun showMoreMenu() {
+        val options = arrayOf("طھظ†ط¸غŒظ…ط§طھ", "ط®ط±ظˆط¬")
+        AlertDialog.Builder(this).setItems(options) { _, which ->
+            if (which == 1) {
+                prefs.edit().clear().apply(); showLogin()
+            }
+        }.show()
+    }
+
+    override fun onDestroy() { sendJob?.cancel(); scope.cancel(); super.onDestroy() }
 }
