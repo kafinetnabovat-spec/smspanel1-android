@@ -348,7 +348,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------- لودرها ----------
-    fun loadGroups() = io {
+    fun loadGroups(): Job = io {
         cacheGroups = JSONArray(getAuth("groups"))
         ui {
             boxGroups.removeAllViews()
@@ -367,7 +367,7 @@ class MainActivity : AppCompatActivity() {
         val s = sp.selectedItem as? String ?: return ""
         return s.substringBefore(" #").let { id -> if (id.all { it.isDigit() }) id else "" }
     }
-    fun loadGroupsTo(sps: List<Spinner>) = io {
+    fun loadGroupsTo(sps: List<Spinner>): Job = io {
         if (cacheGroups.length() == 0) cacheGroups = JSONArray(getAuth("groups"))
         val items = (0 until cacheGroups.length()).map {
             val g = cacheGroups.getJSONObject(it); "${g.getInt("id")} # ${g.getString("name")}"
@@ -375,7 +375,7 @@ class MainActivity : AppCompatActivity() {
         // spVal انتظار "id # name" دارد — برعکس ذخیره می‌کنیم؟ نه: فرمت "id # name"
         ui { for (sp in sps) sp.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, items).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) } }
     }
-    fun loadContacts() = io {
+    fun loadContacts(): Job = io {
         val arr = JSONArray(getAuth("contacts"))
         ui {
             boxContacts.removeAllViews()
@@ -385,7 +385,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    fun loadProducts() = io {
+    fun loadProducts(): Job = io {
         cacheProducts = JSONArray(getAuth("products"))
         ui {
             boxProducts.removeAllViews()
@@ -400,7 +400,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    fun loadTemplates() = io {
+    fun loadTemplates(): Job = io {
         cacheTemplates = JSONArray(getAuth("templates"))
         ui {
             boxTemplates.removeAllViews()
@@ -410,7 +410,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    fun loadBuildTab() = io {
+    fun loadBuildTab(): Job = io {
         if (cacheGroups.length() == 0) cacheGroups = JSONArray(getAuth("groups"))
         if (cacheTemplates.length() == 0) cacheTemplates = JSONArray(getAuth("templates"))
         if (cacheProducts.length() == 0) cacheProducts = JSONArray(getAuth("products"))
@@ -427,7 +427,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    fun loadQueueTab() = io {
+    fun loadQueueTab(): Job = io {
         val arr = JSONArray(getAuth("queue"))
         ui {
             boxQueue.removeAllViews()
