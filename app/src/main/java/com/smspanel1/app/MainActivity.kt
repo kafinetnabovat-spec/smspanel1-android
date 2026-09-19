@@ -1,15 +1,15 @@
-// MainActivity.kt — نسخه 5.0 نهایی - شمسی + 2 تب + بدون کاتالوگ + مزیت رقابتی
+// MainActivity.kt — نسخه 5.1 فیکس بیلد - بدون ارور Type inference
+// تغییرات: تمام Generic ها صریح شدند + ArrayAdapter<String> + List<Msg> صریح
+
 package com.smspanel1.app
 
 import android.Manifest
 import android.content.Context
 import android.content.DialogInterface
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.telephony.SmsManager
@@ -31,13 +31,14 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.*
+import java.text.SimpleDateFormat
 
 object JalaliCalendar {
     private val persianMonths = arrayOf("فروردین","اردیبهشت","خرداد","تیر","مرداد","شهریور","مهر","آبان","آذر","دی","بهمن","اسفند")
     private val persianMonthsShort = arrayOf("فرو","ارد","خرد","تیر","مرد","شهر","مهر","آبا","آذر","دی","بهم","اسفن")
     data class JalaliDate(val year: Int, val month: Int, val day: Int)
     fun gregorianToJalali(gy: Int, gm: Int, gd: Int): JalaliDate {
-        var g_d_m = intArrayOf(0,31,59,90,120,151,181,212,243,273,304,334)
+        val g_d_m = intArrayOf(0,31,59,90,120,151,181,212,243,273,304,334)
         var jy: Int; var gy2 = gy
         if (gy2 > 1600) { jy = 979; gy2 -= 1600 } else { jy = 0; gy2 -= 621 }
         var gy2_ = if (gm > 2) gy2 + 1 else gy2
@@ -45,7 +46,7 @@ object JalaliCalendar {
         jy += 33 * (days / 12053); days %= 12053
         jy += 4 * (days / 1461); days %= 1461
         if (days > 365) { jy += (days - 1) / 365; days = (days - 1) % 365 }
-        var jm: Int; var jd: Int
+        val jm: Int; val jd: Int
         if (days < 186) { jm = 1 + days / 31; jd = 1 + days % 31 }
         else { jm = 7 + (days - 186) / 30; jd = 1 + (days - 186) % 30 }
         return JalaliDate(jy, jm, jd)
@@ -56,14 +57,13 @@ object JalaliCalendar {
     }
     fun parseAndConvert(dateStr: String?): String {
         if (dateStr.isNullOrEmpty()) return "-"
-        try {
+        return try {
             val parts = dateStr.split(" ", "T")
             val datePart = parts[0]
             val timePart = if (parts.size > 1) parts[1].take(5) else ""
             val d = datePart.split("-")
             if (d.size < 3) return dateStr
-            val gy = d[0].toInt(); val gm = d[1].toInt(); val gd = d[2].toInt()
-            val jalali = gregorianToJalali(gy, gm, gd)
+            val jalali = gregorianToJalali(d[0].toInt(), d[1].toInt(), d[2].toInt())
             val today = todayShamsi()
             val diff = (today.year * 365 + today.month * 30 + today.day) - (jalali.year * 365 + jalali.month * 30 + jalali.day)
             val dateFormatted = when (diff) {
@@ -72,44 +72,46 @@ object JalaliCalendar {
                 in 2..6 -> "$diff روز پیش"
                 else -> "${jalali.day} ${persianMonths[jalali.month - 1]} ${jalali.year}"
             }
-            return if (timePart.isNotEmpty()) "$dateFormatted، $timePart" else dateFormatted
-        } catch (e: Exception) { return dateStr }
+            if (timePart.isNotEmpty()) "$dateFormatted، $timePart" else dateFormatted
+        } catch (e: Exception) { dateStr ?: "-" }
     }
     fun chatTime(dateStr: String?): String {
         if (dateStr.isNullOrEmpty()) return ""
-        try {
+        return try {
             val parts = dateStr.split(" ", "T")
             val datePart = parts[0]
             val timePart = if (parts.size > 1) parts[1].take(5) else ""
             val d = datePart.split("-")
             val jalali = gregorianToJalali(d[0].toInt(), d[1].toInt(), d[2].toInt())
             val today = todayShamsi()
-            return if (jalali.year == today.year && jalali.month == today.month && jalali.day == today.day) timePart
+            if (jalali.year == today.year && jalali.month == today.month && jalali.day == today.day) timePart
             else "${jalali.day} ${persianMonthsShort[jalali.month - 1]}"
-        } catch (e: Exception) { return dateStr.take(10) }
+        } catch (e: Exception) { dateStr?.take(10) ?: "" }
     }
     fun formatFull(dateStr: String?): String {
         if (dateStr.isNullOrEmpty()) return "-"
-        try {
+        return try {
             val parts = dateStr.split(" ", "T")
             val datePart = parts[0]
             val timePart = if (parts.size > 1) parts[1].take(5) else ""
             val d = datePart.split("-")
             val jalali = gregorianToJalali(d[0].toInt(), d[1].toInt(), d[2].toInt())
             val full = "${jalali.day} ${persianMonths[jalali.month - 1]} ${jalali.year}"
-            return if (timePart.isNotEmpty()) "$full - $timePart" else full
-        } catch (e: Exception) { return dateStr ?: "-" }
+            if (timePart.isNotEmpty()) "$full - $timePart" else full
+        } catch (e: Exception) { dateStr ?: "-" }
     }
 }
 
 class MainActivity : AppCompatActivity() {
-    var siteUrl = "https://mahdinikzad.ir"
-    var userId = 0
-    var apiToken = ""
-    var username = ""
-    var scope = MainScope()
+
+    var siteUrl: String = "https://mahdinikzad.ir"
+    var userId: Int = 0
+    var apiToken: String = ""
+    var username: String = ""
+    var scope: CoroutineScope = MainScope()
     var sendJob: Job? = null
-    var D = 1f
+    var D: Float = 1f
+
     lateinit var prefs: android.content.SharedPreferences
     lateinit var root: LinearLayout
     lateinit var mainContent: LinearLayout
@@ -117,26 +119,27 @@ class MainActivity : AppCompatActivity() {
     lateinit var topBar: LinearLayout
     lateinit var tvTopTitle: TextView
     lateinit var tvTopSub: TextView
-    var cacheGroups = JSONArray()
-    var cacheContacts = JSONArray()
-    var cacheCampaigns = JSONArray()
-    var cacheTemplates = JSONArray()
-    val WA_GREEN_DARK = Color.parseColor("#075E54")
-    val WA_GREEN = Color.parseColor("#128C7E")
-    val WA_LIGHT_GREEN = Color.parseColor("#25D366")
-    val ORANGE = Color.parseColor("#F39C12")
-    val WHITE = Color.WHITE
-    val BLACK = Color.parseColor("#111B21")
-    val GRAY_500 = Color.parseColor("#667781")
-    val GRAY_200 = Color.parseColor("#F0F2F5")
-    val GRAY_100 = Color.parseColor("#F5F6F6")
-    fun dp(v: Int) = (v * D + 0.5f).toInt()
-    fun rounded(bg: Int, r: Int) = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(r).toFloat(); setColor(bg) }
-    fun roundedBorder(bg: Int, r: Int, stroke: Int, strokeColor: Int) = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(r).toFloat(); setColor(bg); setStroke(dp(stroke), strokeColor) }
-    fun lbl(t: String, size: Float = 14f, bold: Boolean = false, color: Int = BLACK): TextView = TextView(this).apply {
-        text = t; textSize = size; setTextColor(color)
-        if (bold) setTypeface(typeface, Typeface.BOLD)
-    }
+
+    var cacheGroups: JSONArray = JSONArray()
+    var cacheContacts: JSONArray = JSONArray()
+    var cacheCampaigns: JSONArray = JSONArray()
+    var cacheTemplates: JSONArray = JSONArray()
+
+    val WA_GREEN_DARK: Int = Color.parseColor("#075E54")
+    val WA_GREEN: Int = Color.parseColor("#128C7E")
+    val WA_LIGHT_GREEN: Int = Color.parseColor("#25D366")
+    val ORANGE: Int = Color.parseColor("#F39C12")
+    val WHITE: Int = Color.WHITE
+    val BLACK: Int = Color.parseColor("#111B21")
+    val GRAY_500: Int = Color.parseColor("#667781")
+    val GRAY_200: Int = Color.parseColor("#F0F2F5")
+    val GRAY_100: Int = Color.parseColor("#F5F6F6")
+
+    fun dp(v: Int): Int { return (v * D + 0.5f).toInt() }
+    fun rounded(bg: Int, r: Int): GradientDrawable { return GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(r).toFloat(); setColor(bg) } }
+    fun roundedBorder(bg: Int, r: Int, stroke: Int, strokeColor: Int): GradientDrawable { return GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(r).toFloat(); setColor(bg); setStroke(dp(stroke), strokeColor) } }
+    fun lbl(t: String, size: Float = 14f, bold: Boolean = false, color: Int = BLACK): TextView { return TextView(this).apply { text = t; textSize = size; setTextColor(color); if (bold) setTypeface(typeface, Typeface.BOLD) } }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         D = resources.displayMetrics.density
@@ -150,6 +153,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
         if (userId == 0 || apiToken.isEmpty()) showLogin() else showMain()
     }
+
     fun showLogin() {
         root.removeAllViews()
         val scroll = ScrollView(this)
@@ -228,6 +232,7 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(container)
         root.addView(scroll)
     }
+
     fun showMain() {
         root.removeAllViews()
         topBar = LinearLayout(this).apply {
@@ -286,6 +291,7 @@ class MainActivity : AppCompatActivity() {
         selectTab(0, tabChats, tabContacts)
         startAutoSender()
     }
+
     fun makeBottomTab(icon: String, title: String, active: Boolean): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
@@ -295,6 +301,7 @@ class MainActivity : AppCompatActivity() {
             addView(ic); addView(tx)
         }
     }
+
     fun selectTab(index: Int, vararg tabs: LinearLayout) {
         tabs.forEachIndexed { i, tab ->
             val isActive = i == index
@@ -307,6 +314,7 @@ class MainActivity : AppCompatActivity() {
             1 -> showContactsTab()
         }
     }
+
     fun showChatsTab() {
         mainContent.removeAllViews()
         tvTopTitle.text = "پیام‌ها"
@@ -361,7 +369,8 @@ class MainActivity : AppCompatActivity() {
                 } catch (_: Exception) {}
             }
             if (cacheCampaigns.length() == 0) {
-                list.addView(lbl("هنوز پیامی نفرستادی\nروی + بزن", 14f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(40), dp(16), dp(16)) })
+                list.addView(lbl("هنوز پیامی نفرستادی
+روی + بزن", 14f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(40), dp(16), dp(16)) })
             }
         }
         scroll.addView(list)
@@ -369,12 +378,11 @@ class MainActivity : AppCompatActivity() {
         scope.launch(Dispatchers.IO) {
             try {
                 val counts = JSONObject(getAuth("queue/counts"))
-                runOnUiThread {
-                    tvTopSub.text = "در انتظار: ${counts.optInt("pending")} • ارسالی امروز: ${counts.optInt("sent")}"
-                }
+                runOnUiThread { tvTopSub.text = "در انتظار: ${counts.optInt("pending")} • ارسالی امروز: ${counts.optInt("sent")}" }
             } catch (_: Exception) {}
         }
     }
+
     fun showCampaignDetail(c: JSONObject) {
         mainContent.removeAllViews()
         tvTopTitle.text = "جزئیات"
@@ -396,6 +404,7 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(col)
         mainContent.addView(scroll)
     }
+
     fun showContactsTab() {
         mainContent.removeAllViews()
         tvTopTitle.text = "مخاطبین"
@@ -492,10 +501,12 @@ class MainActivity : AppCompatActivity() {
         container.addView(search); container.addView(chipScroll); container.addView(scroll)
         mainContent.addView(container)
     }
+
     fun filterContactsByGroup(groupId: Int, groupName: String) {
         tvTopSub.text = if (groupId == -1) "همه مخاطبین" else "گروه: $groupName"
         showContactsTab()
     }
+
     fun showNewMessageSheet() {
         mainContent.removeAllViews()
         tvTopTitle.text = "ارسال جدید"
@@ -504,7 +515,7 @@ class MainActivity : AppCompatActivity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)) }
         col.addView(lbl("۱. گروه‌ها:", 14f, true))
         val groupChipContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(16)) }
-        val selectedGroups = mutableSetOf()
+        val selectedGroups = HashSet<Int>()
         for (i in 0 until cacheGroups.length()) {
             try {
                 val g = cacheGroups.getJSONObject(i)
@@ -512,7 +523,8 @@ class MainActivity : AppCompatActivity() {
                     text = "${g.getString("name")} (ID:${g.getInt("id")})"
                     tag = g.getInt("id")
                     setOnCheckedChangeListener { _, checked ->
-                        if (checked) selectedGroups.add(g.getInt("id")) else selectedGroups.remove(g.getInt("id"))
+                        val gid = g.getInt("id")
+                        if (checked) selectedGroups.add(gid) else selectedGroups.remove(gid)
                     }
                 }
                 groupChipContainer.addView(check)
@@ -521,11 +533,14 @@ class MainActivity : AppCompatActivity() {
         col.addView(groupChipContainer)
         col.addView(lbl("۲. قالب (اختیاری):", 14f, true))
         val tplSpinner = Spinner(this)
-        val tplItems = mutableListOf("بدون قالب")
+        val tplItems = ArrayList<String>()
+        tplItems.add("بدون قالب")
         for (i in 0 until cacheTemplates.length()) {
             try { tplItems.add(cacheTemplates.getJSONObject(i).getString("title")) } catch (_: Exception) {}
         }
-        tplSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, tplItems)
+        val adapter = ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, tplItems)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        tplSpinner.adapter = adapter
         col.addView(tplSpinner)
         col.addView(lbl("۳. متن پیام:", 14f, true).apply { val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(16), 0, 0); layoutParams = p })
         val etBody = EditText(this).apply {
@@ -554,15 +569,17 @@ class MainActivity : AppCompatActivity() {
             tvResult.text = "در حال ساخت صف..."; tvResult.setTextColor(GRAY_500)
             scope.launch(Dispatchers.IO) {
                 try {
+                    val firstGroupId = selectedGroups.iterator().next()
                     val res = postJson(getAuthUrl("build-queue"), JSONObject()
-                        .put("group_id", selectedGroups.first())
+                        .put("group_id", firstGroupId)
                         .put("template_id", 0)
                         .put("manual_body", etBody.text.toString())
                         .put("product_ids", JSONArray()))
                     val obj = JSONObject(res)
                     val queued = obj.optInt("queued", 0)
                     runOnUiThread {
-                        tvResult.text = "✅ $queued پیام در صف - ${JalaliCalendar.parseAndConvert(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))}"
+                        val nowStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+                        tvResult.text = "✅ $queued پیام در صف - ${JalaliCalendar.parseAndConvert(nowStr)}"
                         tvResult.setTextColor(WA_GREEN_DARK)
                         cacheCampaigns = JSONArray()
                     }
@@ -577,7 +594,9 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(col)
         mainContent.addView(scroll)
     }
-    fun getAuthUrl(path: String) = "$siteUrl/wp-json/smsp1/v1/$path?user_id=$userId&api_token=${URLEncoder.encode(apiToken, "UTF-8")}"
+
+    fun getAuthUrl(path: String): String { return "$siteUrl/wp-json/smsp1/v1/$path?user_id=$userId&api_token=${URLEncoder.encode(apiToken, "UTF-8")}" }
+
     fun postJson(urlStr: String, payload: JSONObject): String {
         val c = (URL(urlStr).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; doOutput = true
@@ -593,6 +612,7 @@ class MainActivity : AppCompatActivity() {
             return text
         } finally { c.disconnect() }
     }
+
     fun getAuth(path: String): String {
         val c = (URL(getAuthUrl(path)).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20000; readTimeout = 20000
@@ -605,6 +625,7 @@ class MainActivity : AppCompatActivity() {
             return text
         } finally { c.disconnect() }
     }
+
     fun startAutoSender() {
         sendJob?.cancel()
         sendJob = scope.launch(Dispatchers.IO) {
@@ -622,27 +643,40 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
     data class Msg(val id: Int, val to: String, val body: String)
-    fun fetchQueue(limit: Int): List {
+
+    fun fetchQueue(limit: Int): ArrayList<Msg> {
         val t = postJson(getAuthUrl("queue/fetch"), JSONObject().put("limit", limit))
         val arr = JSONArray(t)
-        return (0 until arr.length()).map { val o = arr.getJSONObject(it); Msg(o.getInt("id"), o.getString("receiver"), o.getString("body")) }
+        val result = ArrayList<Msg>()
+        for (idx in 0 until arr.length()) {
+            val o = arr.getJSONObject(idx)
+            result.add(Msg(o.getInt("id"), o.getString("receiver"), o.getString("body")))
+        }
+        return result
     }
+
     fun updateStatus(id: Int, status: String) { postJson(getAuthUrl("queue/update"), JSONObject().put("id", id).put("status", status)) }
+
     suspend fun sendSms(to: String, body: String): Boolean = withContext(Dispatchers.Main) {
         if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return@withContext false
         return@withContext try {
             val sm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) getSystemService(SmsManager::class.java) else @Suppress("DEPRECATION") SmsManager.getDefault()
-            sm.sendMultipartTextMessage(to, null, sm.divideMessage(body), null, null)
+            val parts = sm.divideMessage(body)
+            sm.sendMultipartTextMessage(to, null, parts, null, null)
             true
         } catch (_: Exception) { false }
     }
+
     fun showSearchDialog() { Toast.makeText(this, "جستجو در تب مخاطبین", Toast.LENGTH_SHORT).show() }
+
     fun showMoreMenu() {
         val options = arrayOf("تنظیمات", "خروج")
         AlertDialog.Builder(this).setItems(options, DialogInterface.OnClickListener { _: DialogInterface, which: Int ->
             if (which == 1) { prefs.edit().clear().apply(); showLogin() }
         }).show()
     }
+
     override fun onDestroy() { sendJob?.cancel(); scope.cancel(); super.onDestroy() }
 }
