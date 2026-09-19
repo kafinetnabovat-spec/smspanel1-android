@@ -3,10 +3,10 @@ package com.smspanel1.app.service
 import android.app.*
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.telephony.SmsManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import com.smspanel1.app.R
 import com.smspanel1.app.data.ApiService
 import com.smspanel1.app.util.JalaliCalendar
 import kotlinx.coroutines.*
