@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout code
@@ -25,14 +25,18 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
       - name: Install SDK packages
-        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-34' 'build-tools;34.0.0'
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
       - name: Test, lint and build
-        run: ./gradlew testDebugUnitTest lintDebug assembleDebug --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest lintDebug assembleDebug --no-daemon 2>&1 | tee gradle-check.log
+      - name: Summarize checks
+        if: always()
+        run: python3 scripts/ci_summary.py
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -47,4 +51,5 @@ jobs:
           path: |
             app/build/reports/tests/
             app/build/reports/lint-results-debug.*
+            gradle-check.log
           if-no-files-found: ignore

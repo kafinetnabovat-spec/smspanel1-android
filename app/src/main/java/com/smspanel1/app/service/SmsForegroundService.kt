@@ -96,8 +96,9 @@ class SmsForegroundService : Service() {
             if (sendJob?.isActive != true) stopSelfResult(startId)
             return START_NOT_STICKY
         }
-        sendJob?.cancel()
+        val previousJob = sendJob
         activePermit = permit
+        previousJob?.cancel()
         _notice.value = null
         sendJob = scope.launch {
             try {
