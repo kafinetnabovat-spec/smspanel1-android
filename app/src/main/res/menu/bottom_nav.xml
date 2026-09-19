@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/nav_messages" android:title="پیام‌ها" android:icon="@android:drawable/ic_dialog_email"/>
+    <item android:id="@+id/nav_contacts" android:title="مخاطبین" android:icon="@android:drawable/ic_menu_myplaces"/>
+</menu>

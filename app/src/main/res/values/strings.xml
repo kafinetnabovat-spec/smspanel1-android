@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">SmsPanel1</string>
+    <string name="nav_messages">پیام‌ها</string>
+    <string name="nav_contacts">مخاطبین</string>
+</resources>
