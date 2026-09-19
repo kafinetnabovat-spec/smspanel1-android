@@ -1,9 +1,9 @@
-// MainActivity_WhatsAppStyle.kt â€” ظ†ط³ط®ظ‡ ظˆط§طھط³ط§ظ¾غŒ 4.0 - UX ط³ط§ط¯ظ‡ ط´ط¯ظ‡
-// ظ‡ط¯ظپ: ع©ط§ظ‡ط´ 7 طµظپط­ظ‡ ط¨ظ‡ 3 طھط¨ + 1 ط¯ع©ظ…ظ‡ ط´ظ†ط§ظˆط±
-// - طھط¨ 1: ظ¾غŒط§ظ…â€Œظ‡ط§ (ع©ظ…ظ¾غŒظ†â€Œظ‡ط§ ظ…ط«ظ„ ع†طھâ€Œظ‡ط§غŒ ظˆط§طھط³ط§ظ¾)
-// - طھط¨ 2: ظ…ط®ط§ط·ط¨غŒظ† (ط¨ط§ ظپغŒظ„طھط± ع†غŒظ¾ط³غŒ ع¯ط±ظˆظ‡â€Œظ‡ط§ + ط³ط±ع†)
-// - طھط¨ 3: ع©ط§طھط§ظ„ظˆع¯ (ظ…ط­طµظˆظ„ط§طھ + ظ‚ط§ظ„ط¨â€Œظ‡ط§)
-// - FAB: ط§ط±ط³ط§ظ„ ط¬ط¯غŒط¯ (غŒع© ظپظ„ظˆ 3 ظ…ط±ط­ظ„ظ‡â€Œط§غŒ ط¨ظ‡ ط¬ط§غŒ 4 طµظپط­ظ‡ ط¬ط¯ط§)
+// MainActivity_WhatsAppStyle.kt — نسخه واتساپی 4.0 - UX ساده شده
+// هدف: کاهش 7 صفحه به 3 تب + 1 دکمه شناور
+// - تب 1: پیام‌ها (کمپین‌ها مثل چت‌های واتساپ)
+// - تب 2: مخاطبین (با فیلتر چیپسی گروه‌ها + سرچ)
+// - تب 3: کاتالوگ (محصولات + قالب‌ها)
+// - FAB: ارسال جدید (یک فلو 3 مرحله‌ای به جای 4 صفحه جدا)
 
 package com.smspanel1.app
 
@@ -22,7 +22,12 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
+import android.content.DialogInterface
 import android.widget.*
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.Space
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.*
@@ -58,7 +63,7 @@ class MainActivity : AppCompatActivity() {
     var cacheTemplates = JSONArray()
     var cacheCampaigns = JSONArray()
 
-    // Colors - ظˆط§طھط³ط§ظ¾ ط¨غŒط²غŒظ†ط³ + ط¨ط±ظ†ط¯ ظ†ط§ط±ظ†ط¬غŒ طھظˆ
+    // Colors - واتساپ بیزینس + برند نارنجی تو
     val WA_GREEN_DARK = Color.parseColor("#075E54")
     val WA_GREEN = Color.parseColor("#128C7E")
     val WA_LIGHT_GREEN = Color.parseColor("#25D366")
@@ -102,7 +107,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ==================== LOGIN - ط³ط§ط¯ظ‡ ظˆ طھظ…غŒط² ====================
+    // ==================== LOGIN - ساده و تمیز ====================
     fun showLogin() {
         root.removeAllViews()
         val scroll = ScrollView(this)
@@ -112,25 +117,25 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
-        // ظ„ظˆع¯ظˆ
+        // لوگو
         val logo = TextView(this).apply {
-            text = "ًں’¬"; textSize = 64f; gravity = Gravity.CENTER
+            text = "💬"; textSize = 64f; gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(dp(100), dp(100)).apply { gravity = Gravity.CENTER }
             background = rounded(ORANGE, 50)
         }
         container.addView(logo)
         container.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(16)) })
-        container.addView(lbl("ظ¾ظ†ظ„ ظ¾غŒط§ظ…ع©غŒ", 22f, true, BLACK).apply { gravity = Gravity.CENTER })
-        container.addView(lbl("ط§ط±ط³ط§ظ„ ط¨ط§ ط³غŒظ…â€Œع©ط§ط±طھ ط®ظˆط¯طھطŒ ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾", 13f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(24)) })
+        container.addView(lbl("پنل پیامکی", 22f, true, BLACK).apply { gravity = Gravity.CENTER })
+        container.addView(lbl("ارسال با سیم‌کارت خودت، مثل واتساپ", 13f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(24)) })
 
         val etSite = EditText(this).apply {
-            hint = "ط¢ط¯ط±ط³ ط³ط§غŒطھ: https://yoursite.com"
+            hint = "آدرس سایت: https://yoursite.com"
             setText(siteUrl)
             background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
             setPadding(dp(16), dp(14), dp(16), dp(14))
         }
         val etUser = EditText(this).apply {
-            hint = "ظ†ط§ظ… ع©ط§ط±ط¨ط±غŒ"
+            hint = "نام کاربری"
             setText(username)
             background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
             setPadding(dp(16), dp(14), dp(16), dp(14))
@@ -138,7 +143,7 @@ class MainActivity : AppCompatActivity() {
             p.setMargins(0, dp(12), 0, 0); layoutParams = p
         }
         val etPass = EditText(this).apply {
-            hint = "ط±ظ…ط² ط¹ط¨ظˆط±"
+            hint = "رمز عبور"
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
             setPadding(dp(16), dp(14), dp(16), dp(14))
@@ -146,7 +151,7 @@ class MainActivity : AppCompatActivity() {
             p.setMargins(0, dp(12), 0, dp(20)); layoutParams = p
         }
         val btn = Button(this).apply {
-            text = "ظˆط±ظˆط¯"; setTextColor(WHITE); textSize = 16f
+            text = "ورود"; setTextColor(WHITE); textSize = 16f
             background = rounded(WA_GREEN, 24); setTypeface(typeface, Typeface.BOLD)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         }
@@ -157,8 +162,8 @@ class MainActivity : AppCompatActivity() {
             if (!siteUrl.startsWith("http")) siteUrl = "https://$siteUrl"
             val u = etUser.text.toString().trim()
             val p = etPass.text.toString()
-            if (u.isEmpty() || p.isEmpty()) { msg.text = "ظ†ط§ظ… ع©ط§ط±ط¨ط±غŒ ظˆ ط±ظ…ط² ط±ط§ ظˆط§ط±ط¯ ع©ظ†"; return@setOnClickListener }
-            msg.text = "ط¯ط± ط­ط§ظ„ ظˆط±ظˆط¯..."
+            if (u.isEmpty() || p.isEmpty()) { msg.text = "نام کاربری و رمز را وارد کن"; return@setOnClickListener }
+            msg.text = "در حال ورود..."
             msg.setTextColor(GRAY_500)
             scope.launch(Dispatchers.IO) {
                 try {
@@ -173,12 +178,12 @@ class MainActivity : AppCompatActivity() {
                             apiToken = data.optString("api_token", data.optString("api_key"))
                         }
                     }
-                    if (userId == 0 || apiToken.isEmpty()) throw Exception("ظ¾ط§ط³ط® ظ†ط§ظ…ط¹طھط¨ط±")
+                    if (userId == 0 || apiToken.isEmpty()) throw Exception("پاسخ نامعتبر")
                     username = u
                     prefs.edit().putString("site", siteUrl).putString("username", u).putInt("uid", userId).putString("token", apiToken).apply()
                     runOnUiThread { showWhatsAppMain() }
                 } catch (e: Exception) {
-                    runOnUiThread { msg.text = "ط®ط·ط§: ${e.message?.take(150)}"; msg.setTextColor(Color.RED) }
+                    runOnUiThread { msg.text = "خطا: ${e.message?.take(150)}"; msg.setTextColor(Color.RED) }
                 }
             }
         }
@@ -192,7 +197,7 @@ class MainActivity : AppCompatActivity() {
     fun showWhatsAppMain() {
         root.removeAllViews()
 
-        // TopBar ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾
+        // TopBar مثل واتساپ
         topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(WA_GREEN_DARK)
@@ -208,12 +213,12 @@ class MainActivity : AppCompatActivity() {
         }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
         tvTopTitle = lbl(username, 16f, true, WHITE)
-        tvTopSub = lbl("ط¢ظ†ظ„ط§غŒظ† â€¢ $siteUrl", 11f, false, Color.parseColor("#D1D7DB"))
+        tvTopSub = lbl("آنلاین • $siteUrl", 11f, false, Color.parseColor("#D1D7DB"))
         col.addView(tvTopTitle); col.addView(tvTopSub)
         col.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
-        val btnSearch = TextView(this).apply { text = "ًں”چ"; textSize = 20f; setPadding(dp(12), dp(8), dp(12), dp(8)); setOnClickListener { showSearchDialog() } }
-        val btnMore = TextView(this).apply { text = "â‹®"; textSize = 22f; setTextColor(WHITE); setPadding(dp(8), dp(8), dp(8), dp(8)); setOnClickListener { showMoreMenu() } }
+        val btnSearch = TextView(this).apply { text = "🔍"; textSize = 20f; setPadding(dp(12), dp(8), dp(12), dp(8)); setOnClickListener { showSearchDialog() } }
+        val btnMore = TextView(this).apply { text = "⋮"; textSize = 22f; setTextColor(WHITE); setPadding(dp(8), dp(8), dp(8), dp(8)); setOnClickListener { showMoreMenu() } }
 
         topBar.addView(avatar); topBar.addView(col); topBar.addView(btnSearch); topBar.addView(btnMore)
         root.addView(topBar)
@@ -226,15 +231,15 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(mainContent)
 
-        // Bottom Nav ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾
+        // Bottom Nav مثل واتساپ
         bottomNav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(WHITE)
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-        val tabChats = makeBottomTab("ًں’¬", "ظ¾غŒط§ظ…â€Œظ‡ط§", true)
-        val tabContacts = makeBottomTab("ًں‘¥", "ظ…ط®ط§ط·ط¨غŒظ†", false)
-        val tabCatalog = makeBottomTab("ًں“¦", "ع©ط§طھط§ظ„ظˆع¯", false)
+        val tabChats = makeBottomTab("💬", "پیام‌ها", true)
+        val tabContacts = makeBottomTab("👥", "مخاطبین", false)
+        val tabCatalog = makeBottomTab("📦", "کاتالوگ", false)
 
         tabChats.setOnClickListener { selectTab(0, tabChats, tabContacts, tabCatalog) }
         tabContacts.setOnClickListener { selectTab(1, tabChats, tabContacts, tabCatalog) }
@@ -243,12 +248,12 @@ class MainActivity : AppCompatActivity() {
         bottomNav.addView(tabChats); bottomNav.addView(tabContacts); bottomNav.addView(tabCatalog)
         root.addView(bottomNav)
 
-        // FAB ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾
+        // FAB مثل واتساپ
         val fabContainer = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         val fab = Button(this).apply {
-            text = "ï¼‹"; textSize = 28f; setTextColor(WHITE)
+            text = "＋"; textSize = 28f; setTextColor(WHITE)
             background = rounded(WA_LIGHT_GREEN, 28)
             layoutParams = FrameLayout.LayoutParams(dp(56), dp(56)).apply { gravity = Gravity.END or Gravity.BOTTOM; setMargins(0, 0, dp(16), dp(80)) }
             stateListAnimator = null
@@ -259,7 +264,7 @@ class MainActivity : AppCompatActivity() {
 
         // Load initial tab
         selectTab(0, tabChats, tabContacts, tabCatalog)
-        startAutoSender() // ط§ط±ط³ط§ظ„ ط®ظˆط¯ع©ط§ط± ط¯ط± ظ¾ط³â€Œط²ظ…غŒظ†ظ‡
+        startAutoSender() // ارسال خودکار در پس‌زمینه
     }
 
     fun makeBottomTab(icon: String, title: String, active: Boolean): LinearLayout {
@@ -287,16 +292,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ==================== TAB 1: CHATS - ظ…ط«ظ„ ع†طھâ€Œظ‡ط§غŒ ظˆط§طھط³ط§ظ¾ ====================
+    // ==================== TAB 1: CHATS - مثل چت‌های واتساپ ====================
     fun showChatsTab() {
         mainContent.removeAllViews()
-        tvTopTitle.text = "ظ¾غŒط§ظ…â€Œظ‡ط§"
-        tvTopSub.text = "ع©ظ…ظ¾غŒظ†â€Œظ‡ط§غŒ ط§ط±ط³ط§ظ„غŒ"
+        tvTopTitle.text = "پیام‌ها"
+        tvTopSub.text = "کمپین‌های ارسالی"
 
         val scroll = ScrollView(this)
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // ط§ع¯ط± ط®ط§ظ„غŒ ط¨ظˆط¯
+        // اگر خالی بود
         if (cacheCampaigns.length() == 0) {
             scope.launch(Dispatchers.IO) {
                 try {
@@ -305,9 +310,9 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread { showChatsTab() }
                 } catch (_: Exception) {}
             }
-            list.addView(lbl("ط¯ط± ط­ط§ظ„ ط¨ط§ط±ع¯ط°ط§ط±غŒ...", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
+            list.addView(lbl("در حال بارگذاری...", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
         } else {
-            // ظ†ظ…ط§غŒط´ ظ‡ط± ع©ظ…ظ¾غŒظ† ظ…ط«ظ„ غŒع© ع†طھ ظˆط§طھط³ط§ظ¾
+            // نمایش هر کمپین مثل یک چت واتساپ
             for (i in cacheCampaigns.length() - 1 downTo 0) {
                 try {
                     val c = cacheCampaigns.getJSONObject(i)
@@ -319,13 +324,13 @@ class MainActivity : AppCompatActivity() {
                         isClickable = true
                     }
                     val avatar = TextView(this).apply {
-                        text = c.optString("title", "ع©ظ…ظ¾غŒظ†").take(1)
+                        text = c.optString("title", "کمپین").take(1)
                         gravity = Gravity.CENTER; setTextColor(WHITE); textSize = 18f
                         background = rounded(if (c.optString("status") == "sent") WA_LIGHT_GREEN else ORANGE, 24)
                         layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
                     }
                     val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(12), 0); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
-                    val title = lbl(c.optString("title", "ع©ظ…ظ¾غŒظ† #${c.optInt("id")}"), 15f, true)
+                    val title = lbl(c.optString("title", "کمپین #${c.optInt("id")}"), 15f, true)
                     val preview = lbl(c.optString("body", c.optString("message", "")).take(40) + "...", 13f, false, GRAY_500)
                     val time = lbl(c.optString("created_at", "").take(10), 11f, false, GRAY_500)
                     mid.addView(title); mid.addView(preview)
@@ -334,7 +339,7 @@ class MainActivity : AppCompatActivity() {
                     right.addView(time)
                     val statusIcon = lbl(
                         when (c.optString("status")) {
-                            "sent" -> "âœ“âœ“"; "sending" -> "âœ“"; "pending" -> "â—·"; else -> "â€¢"
+                            "sent" -> "✓✓"; "sending" -> "✓"; "pending" -> "◷"; else -> "•"
                         }, 12f, false, if (c.optString("status") == "sent") Color.parseColor("#53BDEB") else GRAY_500
                     )
                     right.addView(statusIcon)
@@ -343,24 +348,24 @@ class MainActivity : AppCompatActivity() {
                     row.setOnClickListener { showCampaignDetail(c) }
                     list.addView(row)
 
-                    // ط®ط· ط¬ط¯ط§ع©ظ†ظ†ط¯ظ‡
+                    // خط جداکننده
                     list.addView(View(this).apply { setBackgroundColor(Color.parseColor("#E9EDEF")); layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { setMargins(dp(72), 0, 0, 0) } })
                 } catch (_: Exception) {}
             }
             if (cacheCampaigns.length() == 0) {
-                list.addView(lbl("ظ‡ظ†ظˆط² ظ¾غŒط§ظ…غŒ ظ†ظپط±ط³طھط§ط¯غŒ\nط±ظˆغŒ + ط¨ط²ظ† طھط§ ط§ظˆظ„غŒظ† ع©ظ…ظ¾غŒظ† ط±ظˆ ط¨ط³ط§ط²غŒ", 14f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(40), dp(16), dp(16)) })
+                list.addView(lbl("هنوز پیامی نفرستادی\nروی + بزن تا اولین کمپین رو بسازی", 14f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(40), dp(16), dp(16)) })
             }
         }
 
         scroll.addView(list)
         mainContent.addView(scroll)
 
-        // ط¢ظ…ط§ط± ط¨ط§ظ„ط§ ظ…ط«ظ„ ظˆط§طھط³ط§ظ¾
+        // آمار بالا مثل واتساپ
         scope.launch(Dispatchers.IO) {
             try {
                 val counts = JSONObject(getAuth("queue/counts"))
                 runOnUiThread {
-                    tvTopSub.text = "ط¯ط± ط§ظ†طھط¸ط§ط±: ${counts.optInt("pending")} â€¢ ط§ط±ط³ط§ظ„غŒ: ${counts.optInt("sent")}"
+                    tvTopSub.text = "در انتظار: ${counts.optInt("pending")} • ارسالی: ${counts.optInt("sent")}"
                 }
             } catch (_: Exception) {}
         }
@@ -368,41 +373,41 @@ class MainActivity : AppCompatActivity() {
 
     fun showCampaignDetail(c: JSONObject) {
         mainContent.removeAllViews()
-        tvTopTitle.text = c.optString("title", "ط¬ط²ط¦غŒط§طھ")
+        tvTopTitle.text = c.optString("title", "جزئیات")
         val scroll = ScrollView(this)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)) }
-        col.addView(lbl("ظ…طھظ† ظ¾غŒط§ظ…:", 13f, true))
+        col.addView(lbl("متن پیام:", 13f, true))
         col.addView(lbl(c.optString("body", c.optString("message", "")), 14f).apply {
             background = rounded(GRAY_100, 12); setPadding(dp(12), dp(12), dp(12), dp(12))
             val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             p.setMargins(0, dp(8), 0, dp(16)); layoutParams = p
         })
-        col.addView(lbl("ظˆط¶ط¹غŒطھ: ${c.optString("status")} â€¢ ${c.optString("receiver", "")}", 12f, false, GRAY_500))
-        val btnBack = Button(this).apply { text = "ط¨ط§ط²ع¯ط´طھ"; background = roundedBorder(WHITE, 12, 1, GRAY_200); setTextColor(GRAY_500) }
+        col.addView(lbl("وضعیت: ${c.optString("status")} • ${c.optString("receiver", "")}", 12f, false, GRAY_500))
+        val btnBack = Button(this).apply { text = "بازگشت"; background = roundedBorder(WHITE, 12, 1, GRAY_200); setTextColor(GRAY_500) }
         btnBack.setOnClickListener { showChatsTab() }
         col.addView(btnBack)
         scroll.addView(col)
         mainContent.addView(scroll)
     }
 
-    // ==================== TAB 2: CONTACTS - ط¨ط§ ع†غŒظ¾ ظپغŒظ„طھط± ====================
+    // ==================== TAB 2: CONTACTS - با چیپ فیلتر ====================
     fun showContactsTab() {
         mainContent.removeAllViews()
-        tvTopTitle.text = "ظ…ط®ط§ط·ط¨غŒظ†"
-        tvTopSub.text = "ظ‡ظ…ظ‡ ظ…ط®ط§ط·ط¨غŒظ†"
+        tvTopTitle.text = "مخاطبین"
+        tvTopSub.text = "همه مخاطبین"
 
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // ط³ط±ع† ط¨ط§ط±
+        // سرچ بار
         val search = EditText(this).apply {
-            hint = "ط¬ط³طھط¬ظˆغŒ ظ†ط§ظ… غŒط§ ط´ظ…ط§ط±ظ‡..."
+            hint = "جستجوی نام یا شماره..."
             background = rounded(GRAY_200, 24)
             setPadding(dp(16), dp(10), dp(16), dp(10))
             val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             p.setMargins(dp(12), dp(8), dp(12), dp(8)); layoutParams = p
         }
 
-        // ع†غŒظ¾â€Œظ‡ط§غŒ ع¯ط±ظˆظ‡ - ظ…ط«ظ„ ظپغŒظ„طھط± ظˆط§طھط³ط§ظ¾
+        // چیپ‌های گروه - مثل فیلتر واتساپ
         val chipScroll = HorizontalScrollView(this)
         val chipContainer = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), dp(4), dp(8), dp(4)) }
 
@@ -421,7 +426,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         chipContainer.removeAllViews()
-        addChip("ظ‡ظ…ظ‡", -1, true)
+        addChip("همه", -1, true)
         for (i in 0 until cacheGroups.length()) {
             try {
                 val g = cacheGroups.getJSONObject(i)
@@ -438,7 +443,7 @@ class MainActivity : AppCompatActivity() {
         }
         chipScroll.addView(chipContainer)
 
-        // ظ„غŒط³طھ ظ…ط®ط§ط·ط¨غŒظ†
+        // لیست مخاطبین
         val scroll = ScrollView(this)
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
@@ -463,7 +468,7 @@ class MainActivity : AppCompatActivity() {
                         layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
                     }
                     val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
-                    mid.addView(lbl(c.optString("name", "ط¨ط¯ظˆظ† ظ†ط§ظ…"), 14f, true))
+                    mid.addView(lbl(c.optString("name", "بدون نام"), 14f, true))
                     mid.addView(lbl(c.optString("mobile", ""), 12f, false, GRAY_500))
                     row.addView(av); row.addView(mid)
                     list.addView(row)
@@ -471,10 +476,10 @@ class MainActivity : AppCompatActivity() {
                     if (count > 100) break
                 } catch (_: Exception) {}
             }
-            if (count == 0) list.addView(lbl("ظ…ط®ط§ط·ط¨غŒ غŒط§ظپطھ ظ†ط´ط¯", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
+            if (count == 0) list.addView(lbl("مخاطبی یافت نشد", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
         }
 
-        // ظ„ظˆط¯ ظ…ط®ط§ط·ط¨غŒظ†
+        // لود مخاطبین
         if (cacheContacts.length() == 0) {
             scope.launch(Dispatchers.IO) {
                 try {
@@ -498,20 +503,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun filterContactsByGroup(groupId: Int, groupName: String) {
-        tvTopSub.text = if (groupId == -1) "ظ‡ظ…ظ‡ ظ…ط®ط§ط·ط¨غŒظ†" else "ع¯ط±ظˆظ‡: $groupName"
-        // ط¯ظˆط¨ط§ط±ظ‡ ط±ظ†ط¯ط± ط¨ط§ ظپغŒظ„طھط± - ط³ط§ط¯ظ‡
+        tvTopSub.text = if (groupId == -1) "همه مخاطبین" else "گروه: $groupName"
+        // دوباره رندر با فیلتر - ساده
         showContactsTab()
     }
 
     // ==================== TAB 3: CATALOG ====================
     fun showCatalogTab() {
         mainContent.removeAllViews()
-        tvTopTitle.text = "ع©ط§طھط§ظ„ظˆع¯"
-        tvTopSub.text = "ظ…ط­طµظˆظ„ط§طھ ظˆ ظ‚ط§ظ„ط¨â€Œظ‡ط§"
+        tvTopTitle.text = "کاتالوگ"
+        tvTopSub.text = "محصولات و قالب‌ها"
 
         val tabRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(GRAY_100) }
-        val tabProd = Button(this).apply { text = "ظ…ط­طµظˆظ„ط§طھ"; background = rounded(WHITE, 0); setTextColor(WA_GREEN_DARK); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
-        val tabTpl = Button(this).apply { text = "ظ‚ط§ظ„ط¨â€Œظ‡ط§"; background = rounded(GRAY_100, 0); setTextColor(GRAY_500); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
+        val tabProd = Button(this).apply { text = "محصولات"; background = rounded(WHITE, 0); setTextColor(WA_GREEN_DARK); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
+        val tabTpl = Button(this).apply { text = "قالب‌ها"; background = rounded(GRAY_100, 0); setTextColor(GRAY_500); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
         tabRow.addView(tabProd); tabRow.addView(tabTpl)
 
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f) }
@@ -536,7 +541,7 @@ class MainActivity : AppCompatActivity() {
                         lp.setMargins(dp(4), dp(4), dp(4), dp(4)); layoutParams = lp
                     }
                     card.addView(lbl(p.optString("title", ""), 14f, true))
-                    card.addView(lbl(p.optString("price", "") + " طھظˆظ…ط§ظ†", 12f, false, ORANGE))
+                    card.addView(lbl(p.optString("price", "") + " تومان", 12f, false, ORANGE))
                     row?.addView(card)
                 } catch (_: Exception) {}
             }
@@ -544,7 +549,7 @@ class MainActivity : AppCompatActivity() {
                 scope.launch(Dispatchers.IO) {
                     try { cacheProducts = JSONArray(getAuth("products")); runOnUiThread { showProducts() } } catch (_: Exception) {}
                 }
-                grid.addView(lbl("ظ…ط­طµظˆظ„غŒ ظ†غŒط³طھ", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
+                grid.addView(lbl("محصولی نیست", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
             }
             scroll.addView(grid); content.addView(scroll)
         }
@@ -591,18 +596,18 @@ class MainActivity : AppCompatActivity() {
         showProducts()
     }
 
-    // ==================== NEW MESSAGE SHEET - ظپظ„ظˆ ط³ط§ط¯ظ‡ 1 طµظپط­ظ‡â€Œط§غŒ ====================
+    // ==================== NEW MESSAGE SHEET - فلو ساده 1 صفحه‌ای ====================
     fun showNewMessageSheet() {
-        // غŒع© BottomSheet ط³ط§ط¯ظ‡ - ط¨ظ‡ ط¬ط§غŒ 4 طµظپط­ظ‡ ط¬ط¯ط§طŒ ظ‡ظ…ظ‡ ط¯ط± غŒع© طµظپط­ظ‡
+        // یک BottomSheet ساده - به جای 4 صفحه جدا، همه در یک صفحه
         mainContent.removeAllViews()
-        tvTopTitle.text = "ط§ط±ط³ط§ظ„ ط¬ط¯غŒط¯"
-        tvTopSub.text = "ط§ظ†طھط®ط§ط¨ ع¯ط±ظˆظ‡ ظˆ ظ†ظˆط´طھظ† ظ¾غŒط§ظ…"
+        tvTopTitle.text = "ارسال جدید"
+        tvTopSub.text = "انتخاب گروه و نوشتن پیام"
 
         val scroll = ScrollView(this)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)) }
 
-        // ظ…ط±ط­ظ„ظ‡ 1: ط§ظ†طھط®ط§ط¨ ع¯ط±ظˆظ‡â€Œظ‡ط§ (ع†غŒظ¾ ع†ظ†ط¯ ط§ظ†طھط®ط§ط¨غŒ)
-        col.addView(lbl("غ±. ع¯ط±ظˆظ‡â€Œظ‡ط§غŒ ظ…ط®ط§ط·ط¨ ط±ط§ ط§ظ†طھط®ط§ط¨ ع©ظ†:", 14f, true))
+        // مرحله 1: انتخاب گروه‌ها (چیپ چند انتخابی)
+        col.addView(lbl("۱. گروه‌های مخاطب را انتخاب کن:", 14f, true))
         val groupChipContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(16)) }
         val selectedGroups = mutableSetOf<Int>()
         for (i in 0 until cacheGroups.length()) {
@@ -620,20 +625,20 @@ class MainActivity : AppCompatActivity() {
         }
         col.addView(groupChipContainer)
 
-        // ظ…ط±ط­ظ„ظ‡ 2: ظ‚ط§ظ„ط¨ ط³ط±غŒط¹
-        col.addView(lbl("غ². ظ‚ط§ظ„ط¨ ط¢ظ…ط§ط¯ظ‡ (ط§ط®طھغŒط§ط±غŒ):", 14f, true))
+        // مرحله 2: قالب سریع
+        col.addView(lbl("۲. قالب آماده (اختیاری):", 14f, true))
         val tplSpinner = Spinner(this)
-        val tplItems = mutableListOf("ط¨ط¯ظˆظ† ظ‚ط§ظ„ط¨ - ظ…طھظ† ط¯ط³طھغŒ")
+        val tplItems = mutableListOf("بدون قالب - متن دستی")
         for (i in 0 until cacheTemplates.length()) {
             try { tplItems.add(cacheTemplates.getJSONObject(i).getString("title")) } catch (_: Exception) {}
         }
         tplSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, tplItems)
         col.addView(tplSpinner)
 
-        // ظ…ط±ط­ظ„ظ‡ 3: ظ…طھظ† ظ¾غŒط§ظ…
-        col.addView(lbl("غ³. ظ…طھظ† ظ¾غŒط§ظ…:", 14f, true).apply { val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(16), 0, 0); layoutParams = p })
+        // مرحله 3: متن پیام
+        col.addView(lbl("۳. متن پیام:", 14f, true).apply { val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(16), 0, 0); layoutParams = p })
         val etBody = EditText(this).apply {
-            hint = "ط³ظ„ط§ظ… {ظ†ط§ظ…} ط¹ط²غŒط²...\n{ظ„غŒط³طھ_ظ‚غŒظ…طھ}"
+            hint = "سلام {نام} عزیز...\n{لیست_قیمت}"
             background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
             setPadding(dp(12), dp(12), dp(12), dp(12))
             minLines = 4
@@ -649,8 +654,8 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
-        // ظ…ط±ط­ظ„ظ‡ 4: ظ…ط­طµظˆظ„ط§طھ
-        col.addView(lbl("غ´. ظ…ط­طµظˆظ„ط§طھ (ط§ط®طھغŒط§ط±غŒ):", 14f, true).apply { val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(16), 0, 0); layoutParams = p })
+        // مرحله 4: محصولات
+        col.addView(lbl("۴. محصولات (اختیاری):", 14f, true).apply { val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(16), 0, 0); layoutParams = p })
         val prodContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val selectedProducts = mutableSetOf<Int>()
         for (i in 0 until cacheProducts.length()) {
@@ -668,14 +673,14 @@ class MainActivity : AppCompatActivity() {
 
         val tvResult = lbl("", 13f, true, WA_GREEN_DARK).apply { setPadding(0, dp(16), 0, 0) }
         val btnSend = Button(this).apply {
-            text = "ًں“¤ ط³ط§ط®طھ طµظپ ظˆ ط§ط±ط³ط§ظ„"; setTextColor(WHITE); background = rounded(WA_LIGHT_GREEN, 24)
+            text = "📤 ساخت صف و ارسال"; setTextColor(WHITE); background = rounded(WA_LIGHT_GREEN, 24)
             val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(20), 0, 0); layoutParams = p
         }
 
         btnSend.setOnClickListener {
-            if (selectedGroups.isEmpty()) { tvResult.text = "غŒع© ع¯ط±ظˆظ‡ ط§ظ†طھط®ط§ط¨ ع©ظ†"; tvResult.setTextColor(Color.RED); return@setOnClickListener }
-            if (etBody.text.toString().trim().isEmpty()) { tvResult.text = "ظ…طھظ† ظ¾غŒط§ظ… ط±ط§ ط¨ظ†ظˆغŒط³"; tvResult.setTextColor(Color.RED); return@setOnClickListener }
-            tvResult.text = "ط¯ط± ط­ط§ظ„ ط³ط§ط®طھ طµظپ..."; tvResult.setTextColor(GRAY_500)
+            if (selectedGroups.isEmpty()) { tvResult.text = "یک گروه انتخاب کن"; tvResult.setTextColor(Color.RED); return@setOnClickListener }
+            if (etBody.text.toString().trim().isEmpty()) { tvResult.text = "متن پیام را بنویس"; tvResult.setTextColor(Color.RED); return@setOnClickListener }
+            tvResult.text = "در حال ساخت صف..."; tvResult.setTextColor(GRAY_500)
             scope.launch(Dispatchers.IO) {
                 try {
                     val res = postJson(getAuthUrl("build-queue"), JSONObject()
@@ -686,18 +691,18 @@ class MainActivity : AppCompatActivity() {
                     val obj = JSONObject(res)
                     val queued = obj.optInt("queued", 0)
                     runOnUiThread {
-                        tvResult.text = "âœ… $queued ظ¾غŒط§ظ… ط¯ط± طµظپ ظ‚ط±ط§ط± ع¯ط±ظپطھ. ط§ط±ط³ط§ظ„ ط®ظˆط¯ع©ط§ط± ط´ط±ظˆط¹ ط´ط¯."
+                        tvResult.text = "✅ $queued پیام در صف قرار گرفت. ارسال خودکار شروع شد."
                         tvResult.setTextColor(WA_GREEN_DARK)
-                        // ط¢ظ¾ط¯غŒطھ ع©ط´
+                        // آپدیت کش
                         cacheCampaigns = JSONArray() // force reload
                     }
                 } catch (e: Exception) {
-                    runOnUiThread { tvResult.text = "ط®ط·ط§: ${e.message?.take(100)}"; tvResult.setTextColor(Color.RED) }
+                    runOnUiThread { tvResult.text = "خطا: ${e.message?.take(100)}"; tvResult.setTextColor(Color.RED) }
                 }
             }
         }
 
-        val btnBack = Button(this).apply { text = "ط¨ط§ط²ع¯ط´طھ"; background = roundedBorder(WHITE, 12, 1, GRAY_200); setTextColor(GRAY_500); val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(12), 0, 0); layoutParams = p }
+        val btnBack = Button(this).apply { text = "بازگشت"; background = roundedBorder(WHITE, 12, 1, GRAY_200); setTextColor(GRAY_500); val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); p.setMargins(0, dp(12), 0, 0); layoutParams = p }
         btnBack.setOnClickListener { showWhatsAppMain() }
 
         col.addView(tvResult); col.addView(btnSend); col.addView(btnBack)
@@ -705,7 +710,7 @@ class MainActivity : AppCompatActivity() {
         mainContent.addView(scroll)
     }
 
-    // ==================== NETWORK - ط¨ط§ UTF-8 ====================
+    // ==================== NETWORK - با UTF-8 ====================
     fun getAuthUrl(path: String) = "$siteUrl/wp-json/smsp1/v1/$path?user_id=$userId&api_token=${URLEncoder.encode(apiToken, "UTF-8")}"
 
     fun postJson(urlStr: String, payload: JSONObject): String {
@@ -719,7 +724,7 @@ class MainActivity : AppCompatActivity() {
             c.outputStream.write(payload.toString().toByteArray(Charsets.UTF_8))
             val code = c.responseCode
             val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) throw Exception("ط³ط±ظˆط± $code: $text")
+            if (code !in 200..299) throw Exception("سرور $code: $text")
             return text
         } finally { c.disconnect() }
     }
@@ -732,12 +737,12 @@ class MainActivity : AppCompatActivity() {
         try {
             val code = c.responseCode
             val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) throw Exception("ط³ط±ظˆط± $code: $text")
+            if (code !in 200..299) throw Exception("سرور $code: $text")
             return text
         } finally { c.disconnect() }
     }
 
-    // ط§ط±ط³ط§ظ„ ط®ظˆط¯ع©ط§ط± ط¯ط± ظ¾ط³â€Œط²ظ…غŒظ†ظ‡
+    // ارسال خودکار در پس‌زمینه
     fun startAutoSender() {
         sendJob?.cancel()
         sendJob = scope.launch(Dispatchers.IO) {
@@ -772,14 +777,15 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) { false }
     }
 
-    fun showSearchDialog() { Toast.makeText(this, "ط¬ط³طھط¬ظˆ: ط¯ط± طھط¨ ظ…ط®ط§ط·ط¨غŒظ† ط³ط±ع† ع©ظ†", Toast.LENGTH_SHORT).show() }
+    fun showSearchDialog() { Toast.makeText(this, "جستجو: در تب مخاطبین سرچ کن", Toast.LENGTH_SHORT).show() }
     fun showMoreMenu() {
-        val options = arrayOf("طھظ†ط¸غŒظ…ط§طھ", "ط®ط±ظˆط¬")
-        AlertDialog.Builder(this).setItems(options) { _, which ->
+        val options = arrayOf("تنظیمات", "خروج")
+        AlertDialog.Builder(this).setItems(options, DialogInterface.OnClickListener { _: DialogInterface, which: Int ->
             if (which == 1) {
-                prefs.edit().clear().apply(); showLogin()
+                prefs.edit().clear().apply()
+                showLogin()
             }
-        }.show()
+        }).show()
     }
 
     override fun onDestroy() { sendJob?.cancel(); scope.cancel(); super.onDestroy() }
