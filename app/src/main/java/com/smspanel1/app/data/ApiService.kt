@@ -5,300 +5,264 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.UUID
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-// سرویس API - امن: توکن فقط در هدر، نه URL
-// فیکس: حذف mahdinikzad.ir هاردکد + HTTPS اجباری + EncryptedSharedPreferences
+/** All authenticated calls can be pinned to a session to prevent cross-account work. */
+class ApiService(context: Context, private val expectedSessionId: String? = null) {
+    private val appContext = context.applicationContext
+    private val prefs: SharedPreferences = securePreferences(appContext)
 
-class ApiService(private val context: Context) {
+    companion object {
+        private val lock = Any()
+        @Volatile private var storageFailed = false
+        private var sharedPreferences: SharedPreferences? = null
+        private val _sessionChanges = MutableStateFlow(0L)
+        val sessionChanges = _sessionChanges.asStateFlow()
 
-    private val prefs: SharedPreferences by lazy {
-        try {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            EncryptedSharedPreferences.create(
-                context,
-                "smspanel1_secure",
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        } catch (e: Exception) {
-            // fallback برای دستگاه‌های قدیمی
-            context.getSharedPreferences("smspanel1", Context.MODE_PRIVATE)
-        }
-    }
-
-    var siteUrl: String
-        get() = prefs.getString("site", "") ?: ""
-        set(value) = prefs.edit().putString("site", value).apply()
-
-    var userId: Int
-        get() = prefs.getInt("uid", 0)
-        set(value) = prefs.edit().putInt("uid", value).apply()
-
-    var apiToken: String
-        get() = prefs.getString("token", "") ?: ""
-        set(value) = prefs.edit().putString("token", value).apply()
-
-    var username: String
-        get() = prefs.getString("username", "") ?: ""
-        set(value) = prefs.edit().putString("username", value).apply()
-
-    fun isLoggedIn(): Boolean = userId > 0 && apiToken.isNotEmpty() && siteUrl.isNotEmpty()
-
-    fun logout() {
-        prefs.edit().clear().apply()
-        userId = 0
-        apiToken = ""
-        username = ""
-        siteUrl = ""
-    }
-
-    fun validateSiteUrl(url: String): String {
-        var u = url.trim().trimEnd('/')
-        if (u.isEmpty()) throw Exception("آدرس سایت خالی است")
-        if (!u.startsWith("https://")) {
-            if (u.startsWith("http://")) {
-                throw Exception("فقط HTTPS مجاز است - آدرس باید https:// باشد")
+        private fun securePreferences(context: Context): SharedPreferences = synchronized(lock) {
+            sharedPreferences ?: run {
+                val key = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+                EncryptedSharedPreferences.create(
+                    context, "smspanel1_secure", key,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                ).also {
+                    // Remove credentials left by the previous insecure fallback. Never use it.
+                    check(context.getSharedPreferences("smspanel1", Context.MODE_PRIVATE)
+                        .edit().clear().commit()) { "پاک‌سازی ذخیره‌سازی قدیمی ناموفق بود" }
+                    if (it.getString("session", "").isNullOrEmpty()) {
+                        check(it.edit().putString("session", UUID.randomUUID().toString()).commit())
+                    }
+                    sharedPreferences = it
+                }
             }
-            u = "https://$u"
         }
-        // جلوگیری از httpfoo.com
-        if (!u.matches(Regex("^https://[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}.*"))) {
-            throw Exception("آدرس سایت نامعتبر است")
-        }
-        return u
     }
 
-    private fun getHeaders(): Map<String, String> {
-        return mapOf(
-            "Authorization" to "Bearer $apiToken",
-            "X-API-TOKEN" to apiToken,
-            "Accept" to "application/json; charset=utf-8",
-            "Content-Type" to "application/json; charset=utf-8"
-        )
+    val siteUrl: String get() = prefs.getString("site", "").orEmpty()
+    val userId: Int get() = prefs.getInt("uid", 0)
+    val username: String get() = prefs.getString("username", "").orEmpty()
+    val sessionId: String get() = prefs.getString("session", "").orEmpty()
+    private val apiToken: String get() = prefs.getString("token", "").orEmpty()
+    fun isLoggedIn(): Boolean = !storageFailed && userId > 0 && apiToken.isNotBlank() && siteUrl.isNotBlank()
+
+    fun logout() = synchronized(lock) {
+        try {
+            check(prefs.edit().clear().commit()) { "پاک‌سازی نشست ناموفق بود" }
+        } catch (e: Exception) {
+            // SharedPreferences commit can update memory yet fail to update disk.
+            storageFailed = true
+            throw e
+        } finally {
+            _sessionChanges.value += 1
+        }
     }
 
-    private fun authUrl(path: String): String {
-        // فقط برای سازگاری قدیمی - توکن اصلی در هدر است
-        return "$siteUrl/wp-json/smsp1/v1/$path"
+    fun validateSiteUrl(url: String): String = SiteUrl.normalize(url)
+
+    private fun checkSession() {
+        if (!isLoggedIn() || (expectedSessionId != null && expectedSessionId != sessionId)) {
+            throw SessionChangedException()
+        }
     }
 
     suspend fun login(site: String, user: String, pass: String): LoginResponse = withContext(Dispatchers.IO) {
+        check(!storageFailed) { "ذخیره‌سازی امن خطا دارد؛ ابتدا داده‌های برنامه را بررسی کنید" }
+        require(user.isNotBlank() && pass.isNotEmpty()) { "نام کاربری و رمز عبور الزامی است" }
+        val startingSession = sessionId
         val validatedSite = validateSiteUrl(site)
         val url = "$validatedSite/wp-json/smsp1/v1/login"
         val payload = JSONObject().put("username", user).put("password", pass)
-        val response = postJson(url, payload, emptyMap()) // لاگین بدون توکن
-        
-        val obj = JSONObject(response)
-        var uid = obj.optInt("user_id")
-        var token = obj.optString("api_token", obj.optString("api_key"))
-        
-        if (uid == 0) {
-            val data = obj.optJSONObject("data")
-            if (data != null) {
-                uid = data.optInt("user_id")
-                token = data.optString("api_token", data.optString("api_key"))
+        val response = request("POST", url, payload)
+
+        val root = JSONObject(response)
+        val obj = if (root.optInt("user_id") > 0) root else root.optJSONObject("data") ?: root
+        val uid = obj.optInt("user_id")
+        val token = obj.text("api_token").ifBlank { obj.text("api_key") }
+        if (uid <= 0 || token.isBlank() || token == "null" || token.any { it.isWhitespace() }) throw Exception("پاسخ نامعتبر از سرور")
+
+        currentCoroutineContext().ensureActive()
+        synchronized(lock) {
+            if (sessionId != startingSession) throw SessionChangedException()
+            try {
+                check(prefs.edit().putString("site", validatedSite).putInt("uid", uid)
+                    .putString("token", token).putString("username", user.trim())
+                    .putString("session", UUID.randomUUID().toString()).commit()) {
+                    "ذخیره امن نشست ناموفق بود"
+                }
+            } catch (e: Exception) {
+                storageFailed = true
+                prefs.edit().clear().commit()
+                throw e
+            } finally {
+                _sessionChanges.value += 1
             }
         }
-        if (uid == 0 || token.isEmpty()) throw Exception("پاسخ نامعتبر از سرور")
-        
-        // ذخیره امن
-        siteUrl = validatedSite
-        userId = uid
-        apiToken = token
-        username = user
-        
+
         LoginResponse(uid, token, username = user)
     }
 
     suspend fun getGroups(): List<Group> = withContext(Dispatchers.IO) {
-        val json = getAuth("groups")
-        val arr = JSONArray(json)
-        val list = mutableListOf<Group>()
-        for (i in 0 until arr.length()) {
-            try {
-                val o = arr.getJSONObject(i)
-                // جلوگیری از "null" string
-                val name = o.optString("name").takeIf { it != "null" && it.isNotEmpty() } ?: "بدون نام"
-                list.add(Group(o.getInt("id"), name, o.optString("descr").takeIf { it != "null" } ?: ""))
-            } catch (_: Exception) {}
+        parseArray(getAuth("groups")) { o ->
+            Group(o.positiveId(), o.text("name").ifBlank { "بدون نام" }, o.text("descr"),
+                o.optInt("contact_count").coerceAtLeast(0))
         }
-        list
     }
 
     suspend fun createGroup(name: String, descr: String = ""): Int = withContext(Dispatchers.IO) {
-        val json = postAuth("groups", JSONObject().put("name", name).put("descr", descr))
-        JSONObject(json).optInt("id")
+        require(name.isNotBlank()) { "نام گروه الزامی است" }
+        JSONObject(postAuth("groups", JSONObject().put("name", name.trim()).put("descr", descr))).positiveId()
     }
 
     suspend fun deleteGroup(id: Int) = withContext(Dispatchers.IO) {
+        require(id > 0)
         deleteAuth("groups/$id")
     }
 
     suspend fun getContacts(): List<Contact> = withContext(Dispatchers.IO) {
-        val json = getAuth("contacts")
-        val arr = JSONArray(json)
-        val list = mutableListOf<Contact>()
-        for (i in 0 until arr.length()) {
-            try {
-                val o = arr.getJSONObject(i)
-                val name = o.optString("name").takeIf { it != "null" && it.isNotEmpty() } ?: o.optString("mobile")
-                val mobile = o.optString("mobile").takeIf { it != "null" } ?: ""
-                if (mobile.isEmpty()) continue
-                list.add(Contact(o.getInt("id"), name, mobile, o.optInt("group_id").takeIf { it != 0 }))
-            } catch (_: Exception) {}
+        parseArray(getAuth("contacts")) { o ->
+            val mobile = o.text("mobile")
+            require(mobile.isNotBlank()) { "شماره مخاطب در پاسخ سرور نامعتبر است" }
+            Contact(o.positiveId(), o.text("name").ifBlank { mobile }, mobile,
+                o.optInt("group_id").takeIf { it > 0 })
         }
-        list
     }
 
     suspend fun getTemplates(): List<Template> = withContext(Dispatchers.IO) {
         try {
-            val json = getAuth("templates")
-            val arr = JSONArray(json)
-            val list = mutableListOf<Template>()
-            for (i in 0 until arr.length()) {
-                try {
-                    val o = arr.getJSONObject(i)
-                    list.add(Template(o.getInt("id"), o.optString("title"), o.optString("body")))
-                } catch (_: Exception) {}
-            }
-            list
-        } catch (e: Exception) {
-            emptyList() // اگر endpoint وجود نداشت، خالی برگردان - نه کرش
+            parseArray(getAuth("templates")) { o -> Template(o.positiveId(), o.text("title"), o.text("body")) }
+        } catch (e: ApiException) {
+            if (e.statusCode == 404) emptyList() else throw e
         }
     }
 
     suspend fun getQueue(): List<QueueItem> = withContext(Dispatchers.IO) {
-        val json = getAuth("queue")
-        val arr = JSONArray(json)
-        val list = mutableListOf<QueueItem>()
-        for (i in 0 until arr.length()) {
-            try {
-                val o = arr.getJSONObject(i)
-                list.add(QueueItem(
-                    o.getInt("id"),
-                    o.optString("receiver").takeIf { it != "null" } ?: "",
-                    o.optString("body").takeIf { it != "null" } ?: "",
-                    o.optString("status"),
-                    o.optString("created_at")
-                ))
-            } catch (_: Exception) {}
+        parseArray(getAuth("queue")) { o ->
+            QueueItem(o.positiveId(), o.text("receiver"), o.text("body"), o.text("status"), o.text("created_at"))
         }
-        list
     }
 
     suspend fun getQueueCounts(): QueueCounts = withContext(Dispatchers.IO) {
         try {
             val json = getAuth("queue/counts")
             val o = JSONObject(json)
-            QueueCounts(o.optInt("pending"), o.optInt("sending"), o.optInt("sent"), o.optInt("failed"))
-        } catch (e: Exception) {
-            QueueCounts()
+            val values = listOf("pending", "sending", "sent", "failed").map { o.getInt(it) }
+            require(values.all { it >= 0 }) { "تعداد وضعیت‌ها در پاسخ سرور نامعتبر است" }
+            QueueCounts(values[0], values[1], values[2], values[3])
+        } catch (e: ApiException) {
+            if (e.statusCode != 404) throw e
+            val queue = getQueue()
+            QueueCounts(queue.count { it.status == "pending" }, queue.count { it.status == "sending" },
+                queue.count { it.status == "sent" }, queue.count { it.status == "failed" })
         }
     }
 
     suspend fun buildQueue(groupIds: List<Int>, body: String, templateId: Int = 0): BuildQueueResponse = withContext(Dispatchers.IO) {
-        if (groupIds.isEmpty()) throw Exception("گروه انتخاب نشده")
-        if (body.isBlank()) throw Exception("متن خالی است")
-        
-        // اگر چند گروه انتخاب شده، برای هر گروه یک درخواست - یا یک درخواست با همه
+        require(groupIds.isNotEmpty() && groupIds.all { it > 0 }) { "گروه معتبر انتخاب نشده" }
+        require(body.isNotBlank()) { "متن خالی است" }
+
+        // Legacy backend accepts one group per request; this operation is not atomic.
         var totalQueued = 0
         var lastCampaignId = 0
-        
-        for (gid in groupIds) {
+
+        for (gid in groupIds.distinct()) {
+            currentCoroutineContext().ensureActive()
             val payload = JSONObject()
                 .put("group_id", gid)
                 .put("template_id", templateId)
                 .put("manual_body", body)
                 .put("product_ids", JSONArray())
-            
+
             val res = postAuth("build-queue", payload)
             val obj = JSONObject(res)
-            totalQueued += obj.optInt("queued")
+            val queued = obj.getInt("queued")
+            require(queued >= 0) { "تعداد صف در پاسخ سرور نامعتبر است" }
+            totalQueued += queued
             lastCampaignId = obj.optInt("campaign_id", lastCampaignId)
         }
-        
+
         BuildQueueResponse(totalQueued, lastCampaignId)
     }
 
     suspend fun fetchQueue(limit: Int): List<QueueItem> = withContext(Dispatchers.IO) {
+        require(limit in 1..100)
         val payload = JSONObject().put("limit", limit)
-        val json = postAuth("queue/fetch", payload)
-        val arr = JSONArray(json)
-        val list = mutableListOf<QueueItem>()
-        for (i in 0 until arr.length()) {
-            try {
-                val o = arr.getJSONObject(i)
-                list.add(QueueItem(o.getInt("id"), o.getString("receiver"), o.getString("body"), "pending", ""))
-            } catch (_: Exception) {}
+        parseArray(postAuth("queue/fetch", payload)) { o ->
+            val receiver = o.text("receiver")
+            val body = o.text("body")
+            require(receiver.isNotBlank() && body.isNotBlank()) { "پیام نامعتبر در صف سرور" }
+            QueueItem(o.positiveId(), receiver, body, "pending", "")
         }
-        list
+    }
+
+    private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key)
+    private fun JSONObject.positiveId(): Int = getInt("id").also {
+        require(it > 0) { "شناسه نامعتبر در پاسخ سرور" }
+    }
+    private fun <T> parseArray(json: String, parse: (JSONObject) -> T): List<T> {
+        val array = JSONArray(json)
+        return List(array.length()) { parse(array.getJSONObject(it)) }
     }
 
     suspend fun updateQueueStatus(id: Int, status: String) = withContext(Dispatchers.IO) {
+        require(id > 0 && status in setOf("sending", "sent", "failed"))
+        postAuth("queue/update", JSONObject().put("id", id).put("status", status))
+    }
+
+    private fun getAuth(path: String) = authenticatedRequest("GET", path)
+    private fun deleteAuth(path: String) = authenticatedRequest("DELETE", path)
+    private fun postAuth(path: String, payload: JSONObject) = authenticatedRequest("POST", path, payload)
+
+    private fun authenticatedRequest(method: String, path: String, payload: JSONObject? = null): String {
+        val credentials = synchronized(lock) {
+            checkSession()
+            Triple(validateSiteUrl(siteUrl), apiToken, sessionId)
+        }
+        return try {
+            val response = request(method, "${credentials.first}/wp-json/smsp1/v1/$path", payload,
+                mapOf("Authorization" to "Bearer ${credentials.second}"))
+            synchronized(lock) {
+                if (sessionId != credentials.third) throw SessionChangedException()
+            }
+            response
+        } catch (e: ApiException) {
+            if (e.statusCode == 401) synchronized(lock) {
+                if (sessionId == credentials.third) logout()
+            }
+            throw e
+        }
+    }
+
+    private fun request(method: String, url: String, payload: JSONObject? = null,
+                        headers: Map<String, String> = emptyMap()): String {
+        val conn = URL(url).openConnection() as HttpURLConnection
         try {
-            postAuth("queue/update", JSONObject().put("id", id).put("status", status))
-        } catch (e: Exception) {
-            // خطای update نباید بقیه را رها کند - لاگ کن و ادامه بده
-            throw Exception("update failed: ${e.message}")
-        }
-    }
-
-    // HTTP helpers
-    private fun getAuth(path: String): String {
-        val conn = (URL(authUrl(path)).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 20000; readTimeout = 20000
-            getHeaders().forEach { (k, v) -> setRequestProperty(k, v) }
-        }
-        return try {
+            conn.requestMethod = method
+            conn.instanceFollowRedirects = false // Never forward credentials to a redirect target.
+            conn.connectTimeout = 20_000
+            conn.readTimeout = 20_000
+            conn.setRequestProperty("Accept", "application/json")
+            headers.forEach { (key, value) -> conn.setRequestProperty(key, value) }
+            if (payload != null) {
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+            }
             val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code == 401) throw Exception("توکن منقضی شده - دوباره وارد شوید")
-            if (code !in 200..299) throw Exception("سرور $code: $text")
-            text
-        } finally { conn.disconnect() }
-    }
-
-    private fun postAuth(path: String, payload: JSONObject): String {
-        return postJson(authUrl(path), payload, getHeaders())
-    }
-
-    private fun deleteAuth(path: String): String {
-        val conn = (URL(authUrl(path)).openConnection() as HttpURLConnection).apply {
-            requestMethod = "DELETE"
-            connectTimeout = 20000; readTimeout = 20000
-            getHeaders().forEach { (k, v) -> setRequestProperty(k, v) }
+            if (code !in 200..299) throw ApiException(code)
+            return conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } finally {
+            conn.disconnect()
         }
-        return try {
-            val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) throw Exception("سرور $code: $text")
-            text
-        } finally { conn.disconnect() }
-    }
-
-    private fun postJson(urlStr: String, payload: JSONObject, headers: Map<String, String>): String {
-        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"; doOutput = true
-            connectTimeout = 20000; readTimeout = 20000
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            headers.forEach { (k, v) -> setRequestProperty(k, v) }
-        }
-        return try {
-            conn.outputStream.write(payload.toString().toByteArray(Charsets.UTF_8))
-            val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code == 401) throw Exception("احراز هویت ناموفق")
-            if (code !in 200..299) throw Exception("سرور $code: ${text.take(300)}")
-            text
-        } finally { conn.disconnect() }
     }
 }

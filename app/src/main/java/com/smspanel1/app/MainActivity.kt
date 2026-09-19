@@ -1,8 +1,6 @@
 package com.smspanel1.app
 
 import android.Manifest
-import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -13,12 +11,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -30,6 +29,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.telephony.SmsMessage
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,6 +44,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smspanel1.app.data.*
 import com.smspanel1.app.service.SmsForegroundService
+import com.smspanel1.app.service.SendControl
 import com.smspanel1.app.util.JalaliCalendar
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,7 +52,7 @@ import kotlinx.coroutines.flow.StateFlow
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ==================== ViewModel - فیکس Race condition + lifecycleScope ====================
+// Session-scoped state; cancelled refreshes cannot replace newer results.
 class MainViewModel : ViewModel() {
     private val _groups = MutableStateFlow<List<Group>>(emptyList())
     val groups: StateFlow<List<Group>> = _groups
@@ -69,203 +75,169 @@ class MainViewModel : ViewModel() {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
-    private val _hasLoadedGroups = MutableStateFlow(false)
-    private val _hasLoadedContacts = MutableStateFlow(false)
-    private val _hasLoadedCampaigns = MutableStateFlow(false)
+    private var loadJob: Job? = null
+    private var generation = 0
 
-    // فیکس مشکل 3: حلقه بی‌نهایت - با hasLoaded جلوی تکرار بی‌نهایت را میگیریم
     fun loadAll(api: ApiService) {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        val request = ++generation
+        loadJob = viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
             try {
-                // لود همه با هم - فیکس مشکل 4: گروه‌ها فقط در مخاطبین لود می‌شد
-                val g = async { try { api.getGroups() } catch (e: Exception) { emptyList() } }
-                val c = async { try { api.getContacts() } catch (e: Exception) { emptyList() } }
-                val q = async { try { api.getQueue() } catch (e: Exception) { emptyList() } }
-                val t = async { try { api.getTemplates() } catch (e: Exception) { emptyList() } }
-                val cnt = async { try { api.getQueueCounts() } catch (e: Exception) { QueueCounts() } }
-
-                _groups.value = g.await()
-                _contacts.value = c.await()
-                _campaigns.value = q.await()
-                _templates.value = t.await()
-                _counts.value = cnt.await()
-
-                _hasLoadedGroups.value = true
-                _hasLoadedContacts.value = true
-                _hasLoadedCampaigns.value = true
-
+                coroutineScope {
+                    val groups = async { api.getGroups() }
+                    val contacts = async { api.getContacts() }
+                    val queue = async { api.getQueue() }
+                    val templates = async { api.getTemplates() }
+                    val counts = async { api.getQueueCounts() }
+                    val g = groups.await()
+                    val c = contacts.await()
+                    val q = queue.await()
+                    val t = templates.await()
+                    val count = counts.await()
+                    ensureActive()
+                    if (request == generation) {
+                        _groups.value = g
+                        _contacts.value = c
+                        _campaigns.value = q
+                        _templates.value = t
+                        _counts.value = count
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _error.value = e.message
+                if (request == generation) _error.value = e.message ?: "دریافت اطلاعات ناموفق بود"
             } finally {
-                _isLoading.value = false
+                if (request == generation) _isLoading.value = false
             }
         }
     }
 
-    fun loadGroups(api: ApiService) {
-        if (_hasLoadedGroups.value) return // جلوگیری از حلقه بی‌نهایت
-        viewModelScope.launch {
-            try {
-                _groups.value = api.getGroups()
-                _hasLoadedGroups.value = true
-            } catch (e: Exception) {
-                _error.value = e.message
-                _hasLoadedGroups.value = true // حتی اگر خطا بود، دیگه تلاش بی‌نهایت نکن
-            }
-        }
-    }
+    fun refresh(api: ApiService) = loadAll(api)
 
-    fun loadContacts(api: ApiService) {
-        if (_hasLoadedContacts.value) return
-        viewModelScope.launch {
-            try {
-                _contacts.value = api.getContacts()
-                _hasLoadedContacts.value = true
-            } catch (e: Exception) {
-                _error.value = e.message
-                _hasLoadedContacts.value = true
-            }
-        }
+    fun reset() {
+        generation++
+        loadJob?.cancel()
+        _groups.value = emptyList()
+        _contacts.value = emptyList()
+        _campaigns.value = emptyList()
+        _templates.value = emptyList()
+        _counts.value = QueueCounts()
+        _error.value = null
+        _isLoading.value = false
     }
-
-    fun loadCampaigns(api: ApiService) {
-        if (_hasLoadedCampaigns.value) return
-        viewModelScope.launch {
-            try {
-                _campaigns.value = api.getQueue()
-                _counts.value = api.getQueueCounts()
-                _hasLoadedCampaigns.value = true
-            } catch (e: Exception) {
-                _error.value = e.message
-                _hasLoadedCampaigns.value = true
-            }
-        }
-    }
-
-    fun refresh(api: ApiService) {
-        _hasLoadedGroups.value = false
-        _hasLoadedContacts.value = false
-        _hasLoadedCampaigns.value = false
-        loadAll(api)
-    }
-
-    fun clearError() { _error.value = null }
 }
 
-// ==================== MainActivity - Compose + Scaffold فیکس FAB ====================
 class MainActivity : ComponentActivity() {
+    private var pendingStart: SendControl.Permit? = null
 
-    private var sendJob: Job? = null
-    private val scope = MainScope()
-
-    // فیکس مشکل 7: مجوز SMS با ActivityResultContracts
-    private val requestPermissionLauncher = registerForActivityResult(
+    private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (!isGranted) {
-            Toast.makeText(this, "مجوز ارسال پیامک رد شد - ارسال کار نمی‌کند", Toast.LENGTH_LONG).show()
+    ) { startSending() }
+
+    private val smsPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) requestNotificationsAndStart()
+        else {
+            pendingStart?.let { SmsForegroundService.cancelRequest(it) }
+            pendingStart = null
+            Toast.makeText(this, "مجوز پیامک داده نشد؛ ارسال شروع نشد", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun requestSending() {
+        val api = ApiService(applicationContext)
+        if (!api.isLoggedIn()) return
+        if (pendingStart?.let { SmsForegroundService.isAuthorized(it, api.sessionId) } == true) return
+        pendingStart = SmsForegroundService.requestStart(api.sessionId)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            smsPermission.launch(Manifest.permission.SEND_SMS)
+        } else requestNotificationsAndStart()
+    }
+
+    private fun requestNotificationsAndStart() {
+        val permit = pendingStart ?: return
+        if (!SmsForegroundService.isAuthorized(permit, ApiService(applicationContext).sessionId)) {
+            pendingStart = null
+            SmsForegroundService.cancelRequest(permit)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else startSending()
+    }
+
+    private fun startSending() {
+        val permit = pendingStart ?: return
+        pendingStart = null
+        try {
+            val api = ApiService(applicationContext)
+            if (api.isLoggedIn() && SmsForegroundService.isAuthorized(permit, api.sessionId)) {
+                SmsForegroundService.start(this, permit)
+            } else SmsForegroundService.cancelRequest(permit)
+        } catch (_: Exception) {
+            SmsForegroundService.cancelRequest(permit)
+            Toast.makeText(this, "شروع سرویس ممکن نشد؛ مجوزها و نشست را بررسی کنید", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        pendingStart?.let {
+            outState.putString("pending_send_token", it.token)
+            outState.putString("pending_send_session", it.sessionId)
+        }
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) pendingStart?.let { SmsForegroundService.cancelRequest(it) }
+        super.onDestroy()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // درخواست مجوز امن
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissionLauncher.launch(Manifest.permission.SEND_SMS)
-        }
-
+        val token = savedInstanceState?.getString("pending_send_token")
+        val session = savedInstanceState?.getString("pending_send_session")
+        if (token != null && session != null) pendingStart = SendControl.Permit(token, session)
         setContent {
             MaterialTheme {
-                val api = remember { com.smspanel1.app.data.ApiService(this) }
-                var isLoggedIn by remember { mutableStateOf(api.isLoggedIn()) }
-
-                if (!isLoggedIn) {
-                    LoginScreen(
-                        api = api,
-                        onLoggedIn = { isLoggedIn = true }
-                    )
-                } else {
-                    MainScreen(
-                        api = api,
-                        onLogout = {
-                            // فیکس مشکل 2: خروج، ارسال را متوقف می‌کند
-                            sendJob?.cancel()
-                            sendJob = null
-                            SmsForegroundService.stop(this)
-                            api.logout()
-                            isLoggedIn = false
-                        },
-                        onStartService = {
-                            // فیکس مشکل 8: Foreground Service
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
-                                }
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    val apiResult = remember { runCatching { ApiService(applicationContext) } }
+                    val api = apiResult.getOrNull()
+                    if (api == null) {
+                        Text("ذخیره‌سازی امن در دسترس نیست. برنامه را دوباره باز کنید؛ اطلاعات ورود به‌صورت غیرامن ذخیره نمی‌شود.",
+                            modifier = Modifier.padding(24.dp))
+                    } else {
+                        val sessionChanges by ApiService.sessionChanges.collectAsStateWithLifecycle()
+                        val loggedIn = remember(sessionChanges) { api.isLoggedIn() }
+                        if (!loggedIn) {
+                            LaunchedEffect(sessionChanges) { SmsForegroundService.stop(this@MainActivity) }
+                            LoginScreen(api = api, onLoggedIn = {})
+                        } else {
+                            val session = api.sessionId
+                            key(session) {
+                                val sessionApi = remember { ApiService(applicationContext, session) }
+                                MainScreen(api = sessionApi,
+                                    onLogout = {
+                                        SmsForegroundService.stop(this@MainActivity)
+                                        pendingStart = null
+                                        try {
+                                            api.logout()
+                                        } catch (_: Exception) {
+                                            Toast.makeText(this@MainActivity, "ذخیره‌سازی نشست خطا دارد؛ پیش از استفاده مجدد داده‌های برنامه را پاک کنید", Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    onStartService = { requestSending() })
                             }
-                            SmsForegroundService.start(this)
-                            startAutoSender(api)
                         }
-                    )
+                    }
                 }
             }
         }
-    }
-
-    // فیکس مشکل 8 + 9 + 10: ارسال مقاوم با backoff و try/catch داخل حلقه
-    private fun startAutoSender(api: com.smspanel1.app.data.ApiService) {
-        sendJob?.cancel()
-        sendJob = scope.launch(Dispatchers.IO) {
-            var backoff = 15000L
-            var consecutiveErrors = 0
-            while (isActive) {
-                try {
-                    if (!api.isLoggedIn()) { delay(30000); continue }
-                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-                        delay(30000); continue // فیکس 7: اگر مجوز نیست، failed نکن
-                    }
-                    val batch = api.fetchQueue(5)
-                    if (batch.isEmpty()) {
-                        consecutiveErrors = 0; backoff = 15000L
-                        delay(15000); continue
-                    }
-                    for (msg in batch) {
-                        if (!isActive) break
-                        try {
-                            val sent = com.smspanel1.app.service.SmsSender.sendSms(this@MainActivity, msg.receiver, msg.body)
-                            try {
-                                api.updateQueueStatus(msg.id, if (sent) "sent" else "failed")
-                                consecutiveErrors = 0
-                            } catch (e: Exception) {
-                                // فیکس 9: خطای update بقیه را رها نمی‌کند
-                            }
-                        } catch (e: Exception) {
-                            try { api.updateQueueStatus(msg.id, "failed") } catch (_: Exception) {}
-                        }
-                        delay(4000)
-                    }
-                } catch (e: Exception) {
-                    consecutiveErrors++
-                    if (e.message?.contains("401") == true || e.message?.contains("منقضی") == true) {
-                        // فیکس 10: 401 را بی‌نهایت تکرار نکن
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(this@MainActivity, "توکن منقضی - دوباره وارد شوید", Toast.LENGTH_LONG).show()
-                        }
-                        break
-                    }
-                    backoff = (backoff * 1.5).toLong().coerceAtMost(120000L)
-                    delay(backoff)
-                }
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        sendJob?.cancel()
-        scope.cancel()
-        super.onDestroy()
     }
 }
 
@@ -278,10 +250,8 @@ fun LoginScreen(api: com.smspanel1.app.data.ApiService, onLoggedIn: () -> Unit) 
     var password by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var isButtonEnabled by remember { mutableStateOf(true) } // فیکس ضد کلیک مضاعف
+    var isButtonEnabled by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-
     Scaffold { padding ->
         Column(
             modifier = Modifier
@@ -303,7 +273,7 @@ fun LoginScreen(api: com.smspanel1.app.data.ApiService, onLoggedIn: () -> Unit) 
             }
             Spacer(modifier = Modifier.height(16.dp))
             Text("پنل پیامکی", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text("نسخه 6.0 - شمسی + ضدکرش", fontSize = 12.sp, color = Color.Gray)
+            Text("نسخه ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = Color.Gray)
             Spacer(modifier = Modifier.height(24.dp))
 
             OutlinedTextField(
@@ -326,6 +296,8 @@ fun LoginScreen(api: com.smspanel1.app.data.ApiService, onLoggedIn: () -> Unit) 
                 value = password,
                 onValueChange = { password = it },
                 label = { Text("رمز عبور") },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -341,6 +313,8 @@ fun LoginScreen(api: com.smspanel1.app.data.ApiService, onLoggedIn: () -> Unit) 
                         try {
                             api.login(siteUrl, username, password)
                             onLoggedIn()
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             error = e.message
                         } finally {
@@ -350,7 +324,7 @@ fun LoginScreen(api: com.smspanel1.app.data.ApiService, onLoggedIn: () -> Unit) 
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = isButtonEnabled
+                enabled = isButtonEnabled && siteUrl.isNotBlank() && username.isNotBlank() && password.isNotEmpty()
             ) {
                 if (isLoading) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White)
                 else Text("ورود")
@@ -364,7 +338,7 @@ fun LoginScreen(api: com.smspanel1.app.data.ApiService, onLoggedIn: () -> Unit) 
             Spacer(modifier = Modifier.height(16.dp))
             Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7))) {
                 Text(
-                    "راهنما: آدرس سایت خودت را وارد کن (نه mahdinikzad.ir)\nبعد از نصب افزونه وردپرس، حتما پیوندهای یکتا را ذخیره بزن",
+                    "راهنما: آدرس HTTPS سایت خود را وارد کنید\nبعد از نصب افزونه وردپرس، حتما پیوندهای یکتا را ذخیره بزن",
                     modifier = Modifier.padding(12.dp),
                     fontSize = 11.sp,
                     color = Color(0xFF92400E)
@@ -374,34 +348,70 @@ fun LoginScreen(api: com.smspanel1.app.data.ApiService, onLoggedIn: () -> Unit) 
     }
 }
 
-// ==================== Main Screen - 2 تب + Scaffold FAB درست ====================
+// Main screen: queue and contacts.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     api: com.smspanel1.app.data.ApiService,
     onLogout: () -> Unit,
     onStartService: () -> Unit,
-    vm: MainViewModel = viewModel()
+    vm: MainViewModel = viewModel(key = api.sessionId)
 ) {
     var selectedTab by remember { mutableStateOf(0) } // 0=پیام‌ها, 1=مخاطبین
     var showNewMessage by remember { mutableStateOf(false) }
     var showDetail by remember { mutableStateOf<QueueItem?>(null) }
-    val groups by vm.groups.collectAsState()
-    val contacts by vm.contacts.collectAsState()
-    val campaigns by vm.campaigns.collectAsState()
-    val templates by vm.templates.collectAsState()
-    val counts by vm.counts.collectAsState()
-    val isLoading by vm.isLoading.collectAsState()
-    val error by vm.error.collectAsState()
+    val groups by vm.groups.collectAsStateWithLifecycle()
+    val contacts by vm.contacts.collectAsStateWithLifecycle()
+    val campaigns by vm.campaigns.collectAsStateWithLifecycle()
+    val templates by vm.templates.collectAsStateWithLifecycle()
+    val counts by vm.counts.collectAsStateWithLifecycle()
+    val isLoading by vm.isLoading.collectAsStateWithLifecycle()
+    val error by vm.error.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    LaunchedEffect(Unit) {
-        vm.loadAll(api)
-        onStartService()
+    val scope = rememberCoroutineScope()
+    val sendState by SmsForegroundService.state.collectAsStateWithLifecycle()
+    val running = sendState.permit != null
+    val serviceNotice by SmsForegroundService.notice.collectAsStateWithLifecycle()
+    var sending by remember { mutableStateOf(false) }
+    var confirmation by remember { mutableStateOf<Pair<List<Int>, String>?>(null) }
+
+    DisposableEffect(vm) { onDispose { vm.reset() } }
+    LaunchedEffect(api) { vm.loadAll(api) }
+
+    confirmation?.let { draft ->
+        AlertDialog(
+            onDismissRequest = { if (!sending) confirmation = null },
+            title = { Text("تأیید ایجاد صف") },
+            text = { Text("برای ${draft.first.size} گروه صف ایجاد شود؟ فقط به مخاطبان دارای رضایت پیام بفرستید. هزینه اپراتور برای هر بخش محاسبه می‌شود.") },
+            confirmButton = {
+                TextButton(enabled = !sending, onClick = {
+                    sending = true
+                    scope.launch {
+                        try {
+                            val result = api.buildQueue(draft.first, draft.second)
+                            Toast.makeText(context, "${result.queued} پیام در صف قرار گرفت", Toast.LENGTH_LONG).show()
+                            showNewMessage = false
+                            confirmation = null
+                            vm.refresh(api)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // Some groups may already be queued. Never retry automatically.
+                            confirmation = null
+                            vm.refresh(api)
+                            Toast.makeText(context, "${e.message}؛ قبل از تلاش دوباره صف را بررسی کنید", Toast.LENGTH_LONG).show()
+                        } finally {
+                            sending = false
+                        }
+                    }
+                }) { Text(if (sending) "در حال ثبت…" else "ایجاد صف") }
+            },
+            dismissButton = { TextButton(enabled = !sending, onClick = { confirmation = null }) { Text("لغو") } }
+        )
     }
 
-    // فیکس مشکل 4: Back کار می‌کند
-    BackHandler(enabled = showNewMessage || showDetail != null) {
+    BackHandler(enabled = !sending && (showNewMessage || showDetail != null)) {
         when {
             showDetail != null -> showDetail = null
             showNewMessage -> showNewMessage = false
@@ -436,14 +446,17 @@ fun MainScreen(
                     }
                 },
                 actions = {
+                    TextButton(onClick = {
+                        if (running) SmsForegroundService.stop(context) else onStartService()
+                    }) { Text(if (running) "توقف ارسال" else "شروع ارسال", color = Color.White) }
                     IconButton(onClick = { vm.refresh(api) }) {
                         Icon(Icons.Default.Refresh, contentDescription = "بروزرسانی", tint = Color.White)
                     }
                     IconButton(onClick = {
                         // منوی خروج
                         android.app.AlertDialog.Builder(context)
-                            .setItems(arrayOf("تنظیمات", "خروج")) { _, which ->
-                                if (which == 1) onLogout()
+                            .setItems(arrayOf("خروج")) { _, _ ->
+                                onLogout()
                             }.show()
                     }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "بیشتر", tint = Color.White)
@@ -453,23 +466,26 @@ fun MainScreen(
             )
         },
         bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Message, contentDescription = null) },
-                    label = { Text("پیام‌ها") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.Contacts, contentDescription = null) },
-                    label = { Text("مخاطبین") }
-                )
+            Column {
+                serviceNotice?.let { Text(it, modifier = Modifier.padding(8.dp), fontSize = 12.sp) }
+                if (selectedTab == 1) error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp)) }
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Icon(Icons.Default.Message, contentDescription = null) },
+                        label = { Text("پیام‌ها") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Icon(Icons.Default.Contacts, contentDescription = null) },
+                        label = { Text("مخاطبین") }
+                    )
+                }
             }
         },
         floatingActionButton = {
-            // فیکس مشکل 1: FAB الان داخل Scaffold و شناور روی محتوا
             FloatingActionButton(
                 onClick = { showNewMessage = true },
                 containerColor = Color(0xFF25D366)
@@ -487,40 +503,13 @@ fun MainScreen(
                 showNewMessage -> NewMessageScreen(
                     groups = groups,
                     templates = templates,
-                    contactsCount = contacts.size,
-                    onBack = { showNewMessage = false },
+                    contacts = contacts,
+                    isSending = sending,
+                    onBack = { if (!sending) showNewMessage = false },
                     onSend = { groupIds, body ->
-                        // فیکس مشکل 5: چند گروه + ضد کلیک مضاعف + نمایش تعداد
-                        if (groupIds.isEmpty()) {
-                            Toast.makeText(context, "یک گروه انتخاب کن", Toast.LENGTH_SHORT).show()
-                            return@NewMessageScreen
+                        if (!sending && confirmation == null && groupIds.isNotEmpty() && body.isNotBlank()) {
+                            confirmation = groupIds to body
                         }
-                        if (body.isBlank()) {
-                            Toast.makeText(context, "متن را بنویس", Toast.LENGTH_SHORT).show()
-                            return@NewMessageScreen
-                        }
-                        // تایید قبل از ارسال انبوه
-                        android.app.AlertDialog.Builder(context)
-                            .setTitle("تایید ارسال")
-                            .setMessage("ارسال به ${groupIds.size} گروه؟")
-                            .setPositiveButton("ارسال") { _, _ ->
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    try {
-                                        val res = api.buildQueue(groupIds, body)
-                                        withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, "✅ ${res.queued} پیام در صف", Toast.LENGTH_LONG).show()
-                                            showNewMessage = false
-                                            vm.refresh(api)
-                                        }
-                                    } catch (e: Exception) {
-                                        withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, "خطا: ${e.message}", Toast.LENGTH_LONG).show()
-                                        }
-                                    }
-                                }
-                            }
-                            .setNegativeButton("لغو", null)
-                            .show()
                     }
                 )
                 else -> {
@@ -546,7 +535,7 @@ fun MainScreen(
     }
 }
 
-// ==================== Chats Screen - با Empty State و شمسی ====================
+// Queue list with status filters.
 @Composable
 fun ChatsScreen(
     campaigns: List<QueueItem>,
@@ -556,12 +545,15 @@ fun ChatsScreen(
     onCampaignClick: (QueueItem) -> Unit,
     onRefresh: () -> Unit
 ) {
+    var statusFilter by remember { mutableStateOf<String?>(null) }
+    val visible = campaigns.filter { statusFilter == null || it.status == statusFilter }
     Column(modifier = Modifier.fillMaxSize()) {
-        // فیلتر چیپ‌ها - فیکس مشکل متوسط
-        Row(modifier = Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = true, onClick = {}, label = { Text("همه (${campaigns.size})") })
-            FilterChip(selected = false, onClick = {}, label = { Text("در انتظار ${counts.pending}") })
-            FilterChip(selected = false, onClick = {}, label = { Text("ارسالی ${counts.sent}") })
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = statusFilter == null, onClick = { statusFilter = null }, label = { Text("همه (${campaigns.size})") })
+            FilterChip(selected = statusFilter == "pending", onClick = { statusFilter = "pending" }, label = { Text("در انتظار ${counts.pending}") })
+            FilterChip(selected = statusFilter == "sending", onClick = { statusFilter = "sending" }, label = { Text("در حال ارسال ${counts.sending}") })
+            FilterChip(selected = statusFilter == "sent", onClick = { statusFilter = "sent" }, label = { Text("ارسالی ${counts.sent}") })
+            FilterChip(selected = statusFilter == "failed", onClick = { statusFilter = "failed" }, label = { Text("ناموفق ${counts.failed}") })
         }
 
         if (isLoading) {
@@ -574,18 +566,17 @@ fun ChatsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = onRefresh) { Text("تلاش مجدد") }
             }
-        } else if (campaigns.isEmpty()) {
-            // فیکس مشکل 3: پیام Empty State نمایش داده می‌شود
+        } else if (visible.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("📭", fontSize = 48.sp)
-                    Text("هنوز پیامی نفرستادی", fontWeight = FontWeight.Bold)
-                    Text("روی + بزن تا اولین کمپین را بسازی", fontSize = 12.sp, color = Color.Gray)
+                    Text(if (statusFilter == null) "هنوز پیامی در صف نیست" else "پیامی با این وضعیت یافت نشد", fontWeight = FontWeight.Bold)
+                    if (statusFilter == null) Text("روی + بزن تا صف جدید بسازی", fontSize = 12.sp, color = Color.Gray)
                 }
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(campaigns.reversed()) { item ->
+                items(visible.reversed()) { item ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -605,7 +596,6 @@ fun ChatsScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(item.receiver, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            // فیکس: جلوگیری از "null" string
                             val body = item.body.takeIf { it != "null" && it.isNotEmpty() } ?: ""
                             Text(body.take(40), fontSize = 12.sp, color = Color.Gray, maxLines = 1)
                         }
@@ -613,9 +603,10 @@ fun ChatsScreen(
                             Text(JalaliCalendar.chatTime(item.created_at), fontSize = 11.sp, color = Color.Gray)
                             Text(
                                 when (item.status) {
-                                    "sent" -> "✓✓"
-                                    "sending" -> "✓"
+                                    "sent" -> "✓ ارسال"
+                                    "sending" -> "در حال ارسال / نامشخص"
                                     "pending" -> "◷"
+                                    "failed" -> "ناموفق"
                                     else -> "•"
                                 },
                                 fontSize = 12.sp,
@@ -630,7 +621,7 @@ fun ChatsScreen(
     }
 }
 
-// ==================== Contacts Screen - فیلتر درست ====================
+// Contacts with search and group filters.
 @Composable
 fun ContactsScreen(
     contacts: List<Contact>,
@@ -683,11 +674,14 @@ fun ContactsScreen(
                 val matchGroup = selectedGroupId == -1 || c.group_id == selectedGroupId
                 val matchSearch = searchText.isEmpty() || c.name.contains(searchText, true) || c.mobile.contains(searchText)
                 matchGroup && matchSearch
-            }.take(100) // فیکس: نمایش 100 تا + اطلاع
+            }
 
             if (filtered.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("مخاطبی یافت نشد", color = Color.Gray)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("مخاطبی یافت نشد", color = Color.Gray)
+                        TextButton(onClick = onRefresh) { Text("بروزرسانی") }
+                    }
                 }
             } else {
                 LazyColumn {
@@ -709,41 +703,33 @@ fun ContactsScreen(
                             }
                         }
                     }
-                    if (contacts.size > 100) {
-                        item {
-                            Text(
-                                "نمایش 100 از ${contacts.size} مخاطب - از جستجو استفاده کن",
-                                modifier = Modifier.padding(16.dp),
-                                fontSize = 11.sp,
-                                color = Color.Gray
-                            )
-                        }
-                    }
+
                 }
             }
         }
     }
 }
 
-// ==================== New Message - چند گروه + ضد کلیک مضاعف ====================
+// Queue creation; request state is owned by the caller.
 @Composable
 fun NewMessageScreen(
     groups: List<Group>,
     templates: List<Template>,
-    contactsCount: Int,
+    contacts: List<Contact>,
+    isSending: Boolean,
     onBack: () -> Unit,
     onSend: (List<Int>, String) -> Unit
 ) {
     var selectedGroups by remember { mutableStateOf(setOf<Int>()) }
     var messageBody by remember { mutableStateOf("") }
     var selectedTemplate by remember { mutableStateOf(0) }
-    var isSending by remember { mutableStateOf(false) }
+
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())
     ) {
         Text("ارسال جدید", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Text("تاریخ شمسی: ${JalaliCalendar.formatFull(SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))}", fontSize = 11.sp, color = Color.Gray)
+        Text("تاریخ شمسی: ${JalaliCalendar.formatFull(SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))}", fontSize = 11.sp, color = Color.Gray)
         Spacer(modifier = Modifier.height(16.dp))
 
         Text("۱. گروه‌ها را انتخاب کن:", fontWeight = FontWeight.Bold)
@@ -759,20 +745,20 @@ fun NewMessageScreen(
                 Text("${g.name} (ID:${g.id})")
             }
         }
-        if (groups.isEmpty()) Text("گروهی نیست - اول گروه بساز", color = Color.Gray, fontSize = 12.sp)
+        if (groups.isEmpty()) Text("گروهی نیست؛ گروه‌ها را در پنل وردپرس بسازید", color = Color.Gray, fontSize = 12.sp)
 
         Spacer(modifier = Modifier.height(16.dp))
         Text("۲. قالب (اختیاری):", fontWeight = FontWeight.Bold)
         var expanded by remember { mutableStateOf(false) }
         Box {
             OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (selectedTemplate == 0) "بدون قالب" else templates.getOrNull(selectedTemplate - 1)?.title ?: "بدون قالب")
+                Text(if (selectedTemplate == 0) "بدون قالب" else templates.find { it.id == selectedTemplate }?.title ?: "بدون قالب")
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 DropdownMenuItem(text = { Text("بدون قالب") }, onClick = { selectedTemplate = 0; expanded = false })
-                templates.forEachIndexed { idx, t ->
+                templates.forEach { t ->
                     DropdownMenuItem(text = { Text(t.title) }, onClick = {
-                        selectedTemplate = idx + 1
+                        selectedTemplate = t.id
                         messageBody = t.body
                         expanded = false
                     })
@@ -788,25 +774,20 @@ fun NewMessageScreen(
             placeholder = { Text("سلام {نام} عزیز...") },
             modifier = Modifier.fillMaxWidth().height(120.dp)
         )
-        Text("${messageBody.length} کاراکتر - ${if (messageBody.any { it.code > 127 }) (messageBody.length / 70 + 1) else (messageBody.length / 160 + 1)} بخش", fontSize = 11.sp, color = Color.Gray)
+        val parts = remember(messageBody) { if (messageBody.isEmpty()) 0 else SmsMessage.calculateLength(messageBody, false)[0] }
+        Text("${messageBody.length} کاراکتر - $parts بخش", fontSize = 11.sp, color = Color.Gray)
 
         Spacer(modifier = Modifier.height(20.dp))
         Button(
             onClick = {
                 if (isSending) return@Button
-                isSending = true
                 onSend(selectedGroups.toList(), messageBody)
-                // فیکس ضد کلیک مضاعف: بعد از 2 ثانیه دوباره فعال
-                CoroutineScope(Dispatchers.Main).launch {
-                    delay(2000)
-                    isSending = false
-                }
             },
             modifier = Modifier.fillMaxWidth(),
-            enabled = !isSending
+            enabled = !isSending && selectedGroups.isNotEmpty() && messageBody.isNotBlank()
         ) {
             if (isSending) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White)
-            else Text("📤 ارسال به ${selectedGroups.size} گروه - $contactsCount مخاطب")
+            else Text("ایجاد صف برای ${selectedGroups.size} گروه - ${contacts.count { it.group_id in selectedGroups }} مخاطب")
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -831,6 +812,7 @@ fun CampaignDetailScreen(item: QueueItem, onBack: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(12.dp))
         Text("وضعیت: ${item.status}", color = Color.Gray)
+        Text("ارسال‌شده به معنی تأیید ارسال توسط سیستم است، نه تحویل به گیرنده. وضعیت sending پس از وقفه ممکن است نامشخص باشد؛ بدون بررسی دوباره ارسال نکنید.", fontSize = 12.sp)
         Spacer(modifier = Modifier.height(20.dp))
         Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("بازگشت") }
     }
