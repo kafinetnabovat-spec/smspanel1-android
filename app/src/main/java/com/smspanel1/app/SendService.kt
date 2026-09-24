@@ -155,6 +155,7 @@ class SendService : Service() {
     private fun authedUrl(path: String) = "$siteUrl/wp-json/smsp1/v1/$path"
 
     private fun postJson(path: String, payload: JSONObject): String {
+        if (apiToken.isNotEmpty() && !payload.has("api_token")) payload.put("api_token", apiToken)
         val c = (URL(authedUrl(path)).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; doOutput = true
             connectTimeout = 20000; readTimeout = 20000
