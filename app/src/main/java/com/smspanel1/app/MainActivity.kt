@@ -144,6 +144,14 @@ class MainActivity : AppCompatActivity() {
     lateinit var tabSettings: LinearLayout
     lateinit var tvSummary: TextView
 
+    // ---- تجربه‌ی اولین ورود: تب خانه، هدف‌های تور و کارتابل ابزارها ----
+    lateinit var tabHome: LinearLayout
+    val tourTargets = HashMap<String, View>()
+    var tourActive = false
+    var onboardingOverlay: View? = null
+    var toolsGridRef: LinearLayout? = null
+    var fabSend: View? = null
+
     var sheetBodyRef: EditText? = null   // پیش‌نویس متن پیام در شیت «ارسال جدید»
 
     var cacheGroups: JSONArray = JSONArray()
@@ -405,6 +413,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(tvTopTitle); col.addView(tvTopSub)
         col.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         val btnSearch = TextView(this).apply { text = "🔍"; textSize = 20f; setPadding(dp(12), dp(8), dp(12), dp(8)); setOnClickListener { showSearchDialog() } }
+        tourTargets["search"] = btnSearch
         val btnMore = TextView(this).apply { text = "⋮"; textSize = 22f; setTextColor(WHITE); setPadding(dp(8), dp(8), dp(8), dp(8)); setOnClickListener { showMoreMenu() } }
         topBar.addView(avatar); topBar.addView(col); topBar.addView(btnSearch); topBar.addView(btnMore)
         root.addView(topBar)
@@ -426,13 +435,20 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(WHITE)
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-        tabChats = makeBottomTab("💬", "پیام‌ها", true)
+        tabHome = makeBottomTab("🏠", "خانه", true)
+        tabChats = makeBottomTab("💬", "پیام‌ها", false)
         tabContacts = makeBottomTab("👥", "مخاطبین", false)
         tabSettings = makeBottomTab("⚙️", "تنظیمات", false)
-        tabChats.setOnClickListener { selectTab(0, tabChats, tabContacts, tabSettings) }
-        tabContacts.setOnClickListener { selectTab(1, tabChats, tabContacts, tabSettings) }
-        tabSettings.setOnClickListener { selectTab(2, tabChats, tabContacts, tabSettings) }
-        bottomNav.addView(tabChats); bottomNav.addView(tabContacts); bottomNav.addView(tabSettings)
+        tabHome.setOnClickListener { selectTab(0) }
+        tabChats.setOnClickListener { selectTab(1) }
+        tabContacts.setOnClickListener { selectTab(2) }
+        tabSettings.setOnClickListener { selectTab(3) }
+        bottomNav.addView(tabHome); bottomNav.addView(tabChats)
+        bottomNav.addView(tabContacts); bottomNav.addView(tabSettings)
+        tourTargets["tab_home"] = tabHome
+        tourTargets["tab_chats"] = tabChats
+        tourTargets["tab_contacts"] = tabContacts
+        tourTargets["tab_settings"] = tabSettings
         root.addView(bottomNav)
         val fab = Button(this).apply {
             text = "＋"; textSize = 28f; setTextColor(WHITE)
@@ -445,8 +461,14 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { showNewMessageSheet() }
         }
         contentFrame.addView(fab)
-        selectTab(0, tabChats, tabContacts, tabSettings)
+        fabSend = fab
+        tourTargets["fab"] = fab
+        selectTab(0)
         startSendService()
+        // ── اولین ورود: «دفتر مجازی» + آموزش تصویری (فقط یک‌بار) ──
+        if (!prefs.getBoolean("onboard_seen", false)) {
+            root.postDelayed({ try { showWelcomeScreen() } catch (_: Exception) {} }, 500)
+        }
         checkForUpdate(silent = true)   // بررسی نسخه‌ی جدید در پس‌زمینه
     }
 
@@ -460,7 +482,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun selectTab(index: Int, vararg tabs: LinearLayout) {
+    fun selectTab(index: Int) {
+        val tabs = arrayOf(tabHome, tabChats, tabContacts, tabSettings)
         tabs.forEachIndexed { i, tab ->
             val isActive = i == index
             (tab.getChildAt(0) as TextView).setTextColor(if (isActive) WA_GREEN_DARK else GRAY_500)
@@ -468,9 +491,10 @@ class MainActivity : AppCompatActivity() {
             (tab.getChildAt(1) as TextView).setTypeface(null, if (isActive) Typeface.BOLD else Typeface.NORMAL)
         }
         when (index) {
-            0 -> showChatsTab(true)   // هر بار ورود به تب، از سرور تازه شود
-            1 -> showContactsTab(true)
-            2 -> showSettingsTab()
+            0 -> showHomeTab()        // کارتابل: ابزارها و خلاصه‌ی امروز
+            1 -> showChatsTab(true)   // هر بار ورود به تب، از سرور تازه شود
+            2 -> showContactsTab(true)
+            3 -> showSettingsTab()
         }
     }
 
@@ -1480,6 +1504,32 @@ class MainActivity : AppCompatActivity() {
         btnUpdate.setOnClickListener { checkForUpdate(silent = false) }
         col.addView(btnUpdate)
 
+        // ---- راهنما، آموزش و معرفی سازنده ----
+        col.addView(lbl("راهنما و پشتیبانی", 14f, true).apply { setPadding(0, dp(24), 0, dp(4)) })
+        col.addView(lbl("اگر جایی گیر کردی، آموزش تصویری همه‌ی بخش‌ها را نشانت می‌دهد.", 12f, false, GRAY_500).apply { setPadding(0, dp(4), 0, dp(10)) })
+        col.addView(Button(this).apply {
+            text = "🎓 آموزش اپ (نمایش دوباره)"
+            setTextColor(WA_GREEN_DARK)
+            background = roundedBorder(WHITE, 14, 1, GRAY_200)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, dp(10)) }
+            setOnClickListener { startAppTour() }
+        })
+        col.addView(Button(this).apply {
+            text = "ℹ️ درباره ما — مهدی نیکزاد"
+            setTextColor(WA_GREEN_DARK)
+            background = roundedBorder(WHITE, 14, 1, GRAY_200)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, dp(10)) }
+            setOnClickListener { showAboutScreen() }
+        })
+        col.addView(Button(this).apply {
+            text = "🌐 سایت سازنده: mahdinikzad.ir"
+            setTextColor(WA_GREEN_DARK)
+            background = roundedBorder(WHITE, 14, 1, GRAY_200)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            setOnClickListener { openSite() }
+        })
+        col.addView(lbl("🎯 هدف: توسعه و چابکی کسب‌وکار شما · ساخته‌ی مهدی نیکزاد", 11f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(0, dp(18), 0, 0) })
+
         scroll.addView(col)
         mainContent.addView(scroll)
     }
@@ -1697,6 +1747,8 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
                 if (!force && prefs.getString("skip_update_version", "") == remote) return@launch
+                // وسط خوش‌آمد/آموزش، دیالوگ به‌روزرسانی مزاحم نشود
+                if (tourActive || onboardingOverlay != null) return@launch
                 runOnUiThread { showUpdateDialog(remote, local, apkUrl, changelog, size, force) }
             } catch (e: Exception) {
                 if (!silent) runOnUiThread { toast("خطا در بررسی به‌روزرسانی: ${e.message?.take(80)}") }
@@ -1823,17 +1875,19 @@ class MainActivity : AppCompatActivity() {
     // ==================== MISC ====================
 
     fun showSearchDialog() {
-        selectTab(1, tabChats, tabContacts, tabSettings)
+        selectTab(2)
         toast("مخاطبین را جستجو کن")
     }
 
     fun showMoreMenu() {
-        val options = arrayOf("تنظیمات", "توقف ارسال", "خروج")
+        val options = arrayOf("🎓 آموزش اپ", "ℹ️ درباره ما", "تنظیمات", "توقف ارسال", "خروج")
         AlertDialog.Builder(this).setItems(options, DialogInterface.OnClickListener { _: DialogInterface, which: Int ->
             when (which) {
-                0 -> showSettingsTab()
-                1 -> { stopSendService(); toast("ارسال متوقف شد") }
-                2 -> {
+                0 -> startAppTour()
+                1 -> showAboutScreen()
+                2 -> showSettingsTab()
+                3 -> { stopSendService(); toast("ارسال متوقف شد") }
+                4 -> {
                     stopSendService()
                     prefs.edit().clear().apply()
                     userId = 0; apiToken = ""; username = ""

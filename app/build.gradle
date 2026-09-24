@@ -15,8 +15,8 @@ android {
         applicationId "com.smspanel1.app"
         minSdk 24
         targetSdk 34
-        versionCode 17
-        versionName "8.2.0"
+        versionCode 18
+        versionName "8.3.0"
     }
     signingConfigs {
         release {
