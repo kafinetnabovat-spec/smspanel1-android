@@ -3,7 +3,7 @@
  * Plugin Name: MahdiNikzad SMS Gateway
  * Plugin URI: https://mahdinikzad.ir
  * Description: بک‌اند اپ SmsPanel — مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
- * Version: 4.1.1
+ * Version: 4.1.2
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: Mahdi Nikzad
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SMSP1_VERSION', '4.1.1');
+define('SMSP1_VERSION', '4.1.2');
 define('SMSP1_SLUG', 'mahdinikzad-sms-gateway/mahdinikzad-sms-gateway.php');
 define('SMSP1_LICENSE_ACTIVE_META', '_smsp1_license_active');
 define('SMSP1_LICENSE_EXPIRES_META', '_smsp1_license_expires');
@@ -155,6 +155,25 @@ add_action('rest_api_init', function () {
         },
     ]);
 
+    // Public diagnostic: shows WHICH token channel reaches PHP (values never echoed).
+    register_rest_route($ns, '/diag', [
+        'methods' => 'GET',
+        'permission_callback' => '__return_true',
+        'callback' => function (WP_REST_Request $req) {
+            $auth = (string) $req->get_header('Authorization');
+            $x = (string) $req->get_header('X-SMSP1-Token');
+            $p = (string) $req->get_param('api_token');
+            return [
+                'version' => SMSP1_VERSION,
+                'ssl' => is_ssl(),
+                'auth_header_seen' => $auth !== '',
+                'auth_is_bearer' => (bool) preg_match('/Bearer\s+\S+/', $auth),
+                'x_token_seen' => $x !== '',
+                'param_seen' => $p !== '',
+            ];
+        },
+    ]);
+
     $authed = function (callable $cb) {
         return function (WP_REST_Request $req) use ($cb) {
             $uid = smsp1_require_auth($req);
@@ -239,6 +258,9 @@ add_action('rest_api_init', function () {
             $gid = (int) $req->get_param('group_id');
             $body = (string) $req->get_param('manual_body');
             if ($gid <= 0 || !$body) return new WP_Error('bad', 'group_id و manual_body لازم است', ['status' => 400]);
+            // tenant isolation: group must belong to the caller (IDOR guard)
+            $owner = (int) $wpdb->get_var($wpdb->prepare("SELECT user_id FROM " . smsp1_table('groups') . " WHERE id=%d", $gid));
+            if ($owner !== $uid) return new WP_Error('forbidden', 'گروه متعلق به شما نیست', ['status' => 403]);
             $contacts = $wpdb->get_results($wpdb->prepare("SELECT name, mobile FROM " . smsp1_table('contacts') . " WHERE user_id=%d AND group_id=%d", $uid, $gid), ARRAY_A);
             if (!$contacts) return new WP_Error('empty', 'مخاطبی در این گروه نیست', ['status' => 400]);
             $gname = $wpdb->get_var($wpdb->prepare("SELECT name FROM " . smsp1_table('groups') . " WHERE id=%d", $gid));
