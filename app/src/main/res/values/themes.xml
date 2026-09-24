@@ -1,6 +1,7 @@
 <resources>
     <!-- Keep legacy alias for compatibility -->
     <style name="Theme.AppCompat.Light.NoActionBar" parent="Theme.SmsPanel1" />
+
     <style name="Theme.SmsPanel1" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">@color/smsp1_green_dark</item>
         <item name="colorOnPrimary">#FFFFFF</item>
@@ -8,5 +9,29 @@
         <item name="colorTertiary">@color/smsp1_green_light</item>
         <item name="android:statusBarColor">@color/smsp1_green_dark</item>
         <item name="android:windowBackground">@color/smsp1_bg</item>
+        <!-- فونت فارسی وزیرمتن برای همه‌ی ویجت‌ها و دیالوگ‌ها -->
+        <item name="android:fontFamily">@font/vazirmatn</item>
+        <item name="fontFamily">@font/vazirmatn</item>
+        <item name="alertDialogTheme">@style/Theme.SmsPanel1.Dialog</item>
+        <item name="materialAlertDialogTheme">@style/Theme.SmsPanel1.Dialog</item>
+        <item name="android:textViewStyle">@style/SmsPanel1.TextView</item>
+        <item name="android:buttonStyle">@style/SmsPanel1.Button</item>
+        <item name="android:editTextStyle">@style/SmsPanel1.EditText</item>
+    </style>
+
+    <style name="Theme.SmsPanel1.Dialog" parent="ThemeOverlay.AppCompat.Dialog.Alert">
+        <item name="android:fontFamily">@font/vazirmatn</item>
+        <item name="fontFamily">@font/vazirmatn</item>
+        <item name="colorPrimary">@color/smsp1_green_dark</item>
+    </style>
+
+    <style name="SmsPanel1.TextView" parent="android:Widget.TextView">
+        <item name="android:fontFamily">@font/vazirmatn</item>
+    </style>
+    <style name="SmsPanel1.Button" parent="android:Widget.Button">
+        <item name="android:fontFamily">@font/vazirmatn</item>
+    </style>
+    <style name="SmsPanel1.EditText" parent="android:Widget.EditText">
+        <item name="android:fontFamily">@font/vazirmatn</item>
     </style>
 </resources>

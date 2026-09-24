@@ -3,7 +3,7 @@
  * Plugin Name: MahdiNikzad SMS Gateway
  * Plugin URI: https://mahdinikzad.ir
  * Description: بک‌اند اپ SmsPanel — مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
- * Version: 4.3.0
+ * Version: 4.4.0
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: Mahdi Nikzad
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SMSP1_VERSION', '4.3.0');
+define('SMSP1_VERSION', '4.4.0');
 define('SMSP1_SLUG', 'mahdinikzad-sms-gateway/mahdinikzad-sms-gateway.php');
 define('SMSP1_LICENSE_ACTIVE_META', '_smsp1_license_active');
 define('SMSP1_LICENSE_EXPIRES_META', '_smsp1_license_expires');
@@ -196,6 +196,22 @@ add_action('rest_api_init', function () {
         return !is_wp_error(smsp1_require_auth($req));
     };
 
+    // تأیید هویت: اپ بعد از لاگین این را صدا می‌زند تا مطمئن شود توکن به همان کاربر تعلق دارد
+    register_rest_route($ns, '/me', [
+        'methods' => 'GET', 'permission_callback' => $perm, 'callback' => $authed(function ($req, $uid) {
+            $u = get_userdata($uid);
+            $exp = get_user_meta($uid, SMSP1_LICENSE_EXPIRES_META, true);
+            return [
+                'user_id' => (int) $uid,
+                'username' => $u ? $u->user_login : '',
+                'display_name' => $u ? $u->display_name : '',
+                'license_active' => get_user_meta($uid, SMSP1_LICENSE_ACTIVE_META, true) === '1',
+                'license_expires' => $exp ?: '',
+                'version' => SMSP1_VERSION,
+            ];
+        }),
+    ]);
+
     register_rest_route($ns, '/groups', [
         ['methods' => 'GET', 'permission_callback' => $perm, 'callback' => $authed(function ($req, $uid) {
             global $wpdb;
@@ -207,6 +223,18 @@ add_action('rest_api_init', function () {
             if (!$name) return new WP_Error('bad', 'نام گروه لازم است', ['status' => 400]);
             $wpdb->insert(smsp1_table('groups'), ['user_id' => $uid, 'name' => $name]);
             return ['id' => (int) $wpdb->insert_id, 'name' => $name];
+        })],
+        ['methods' => 'DELETE', 'permission_callback' => $perm, 'callback' => $authed(function ($req, $uid) {
+            global $wpdb;
+            $id = (int) $req->get_param('id');
+            if ($id <= 0) return new WP_Error('bad', 'id لازم است', ['status' => 400]);
+            $g = smsp1_table('groups');
+            // فقط گروهی که خود کاربر ساخته قابل حذف است
+            $owner = (int) $wpdb->get_var($wpdb->prepare("SELECT user_id FROM $g WHERE id=%d", $id));
+            if ($owner !== $uid) return new WP_Error('forbidden', 'گروه متعلق به شما نیست', ['status' => 403]);
+            $wpdb->delete(smsp1_table('contacts'), ['group_id' => $id, 'user_id' => $uid]);
+            $wpdb->delete($g, ['id' => $id, 'user_id' => $uid]);
+            return ['deleted' => 1];
         })],
     ]);
 
@@ -238,6 +266,9 @@ add_action('rest_api_init', function () {
             global $wpdb;
             $gid = (int) $req->get_param('group_id');
             if ($gid > 0) {
+                // دفاع در عمق: حتی برای خواندن هم مالکیت گروه بررسی می‌شود
+                $owner = (int) $wpdb->get_var($wpdb->prepare("SELECT user_id FROM " . smsp1_table('groups') . " WHERE id=%d", $gid));
+                if ($owner !== $uid) return new WP_Error('forbidden', 'گروه متعلق به شما نیست', ['status' => 403]);
                 return $wpdb->get_results($wpdb->prepare("SELECT id, group_id, name, mobile FROM " . smsp1_table('contacts') . " WHERE user_id=%d AND group_id=%d ORDER BY id DESC LIMIT 2000", $uid, $gid), ARRAY_A);
             }
             return $wpdb->get_results($wpdb->prepare("SELECT id, group_id, name, mobile FROM " . smsp1_table('contacts') . " WHERE user_id=%d ORDER BY id DESC LIMIT 2000", $uid), ARRAY_A);
@@ -267,6 +298,48 @@ add_action('rest_api_init', function () {
             }
             return ['inserted' => $inserted, 'skipped' => $skipped];
         })],
+        // حذف مخاطب: یا با ids=1,2,3 یا با group_id (حذف همه‌ی مخاطبین آن گروه)
+        ['methods' => 'DELETE', 'permission_callback' => $perm, 'callback' => $authed(function ($req, $uid) {
+            global $wpdb;
+            $t = smsp1_table('contacts');
+            $gid = (int) $req->get_param('group_id');
+            if ($gid > 0) {
+                $owner = (int) $wpdb->get_var($wpdb->prepare("SELECT user_id FROM " . smsp1_table('groups') . " WHERE id=%d", $gid));
+                if ($owner !== $uid) return new WP_Error('forbidden', 'گروه متعلق به شما نیست', ['status' => 403]);
+                $n = (int) $wpdb->query($wpdb->prepare("DELETE FROM $t WHERE user_id=%d AND group_id=%d", $uid, $gid));
+                return ['deleted' => $n];
+            }
+            $ids = array_values(array_filter(array_map('intval', explode(',', (string) $req->get_param('ids'))), function ($i) { return $i > 0; }));
+            if (!$ids) return new WP_Error('bad', 'ids یا group_id لازم است', ['status' => 400]);
+            $ids = array_slice(array_unique($ids), 0, 5000);
+            $in = implode(',', $ids);
+            // user_id در خود شرط حذف هست: امکان پاک‌کردن رکورد کاربر دیگر وجود ندارد
+            $n = (int) $wpdb->query($wpdb->prepare("DELETE FROM $t WHERE user_id=%d AND id IN ($in)", $uid));
+            return ['deleted' => $n];
+        })],
+    ]);
+
+    // ویرایش مخاطب: تغییر نام و/یا انتقال به گروه دیگر (هر دو با بررسی مالکیت)
+    register_rest_route($ns, '/contacts/update', [
+        'methods' => 'POST', 'permission_callback' => $perm, 'callback' => $authed(function ($req, $uid) {
+            global $wpdb;
+            $id = (int) $req->get_param('id');
+            if ($id <= 0) return new WP_Error('bad', 'id لازم است', ['status' => 400]);
+            $t = smsp1_table('contacts');
+            $row = $wpdb->get_row($wpdb->prepare("SELECT id FROM $t WHERE id=%d AND user_id=%d", $id, $uid), ARRAY_A);
+            if (!$row) return new WP_Error('notfound', 'مخاطب یافت نشد', ['status' => 404]);
+            $data = [];
+            if ($req->get_param('name') !== null) $data['name'] = sanitize_text_field((string) $req->get_param('name'));
+            $gid = (int) $req->get_param('group_id');
+            if ($gid > 0) {
+                $owner = (int) $wpdb->get_var($wpdb->prepare("SELECT user_id FROM " . smsp1_table('groups') . " WHERE id=%d", $gid));
+                if ($owner !== $uid) return new WP_Error('forbidden', 'گروه مقصد متعلق به شما نیست', ['status' => 403]);
+                $data['group_id'] = $gid;
+            }
+            if (!$data) return new WP_Error('bad', 'چیزی برای تغییر نیست', ['status' => 400]);
+            $wpdb->update($t, $data, ['id' => $id, 'user_id' => $uid]);
+            return ['ok' => true];
+        }),
     ]);
 
     register_rest_route($ns, '/queue', [
@@ -363,6 +436,19 @@ add_action('rest_api_init', function () {
         }),
     ]);
 });
+
+// ---------- امنیت: هیچ پاسخ این API نباید کش شود ----------
+// اگر هاست/CDN/پلاگین کش، پاسخ یک کاربر را کش کند، کاربر بعدی همان داده را می‌بیند.
+// این فیلتر تضمین می‌کند پاسخ‌های smsp1 هرگز کش نشوند.
+add_filter('rest_post_dispatch', function ($result, $server, $request) {
+    $route = $request->get_route();
+    if (strpos($route, '/smsp1/v1/') === 0) {
+        $result->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        $result->header('Pragma', 'no-cache');
+        $result->header('Expires', '0');
+    }
+    return $result;
+}, 10, 3);
 
 // ---------- admin UI ----------
 require_once __DIR__ . '/includes/admin.php';

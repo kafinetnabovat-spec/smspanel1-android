@@ -34,6 +34,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.res.ResourcesCompat
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -150,6 +151,26 @@ class MainActivity : AppCompatActivity() {
     var cacheCampaigns: JSONArray = JSONArray()
     var cacheTemplates: JSONArray = JSONArray()
 
+    // ---- مالکیت کش: هر داده‌ی کش‌شده متعلق به یک کاربر است؛ قبل از هر رندر بررسی می‌شود ----
+    // اگر کاربر حسابش را عوض کند، داده‌ی کاربر قبلی حتی یک لحظه هم رندر نمی‌شود.
+    var cacheOwnerUid: Int = -1
+
+    // ---- وضعیت تب مخاطبین ----
+    var selectionMode = false
+    val selectedContactIds = HashSet<Int>()
+    var contactQuery = ""
+
+    // ---- انتخاب از مخاطبین گوشی ----
+    var phoneRows: ArrayList<Pair<String, String>> = ArrayList()
+    val phoneSelected = HashSet<String>()
+    var phonePickerLoaded = false
+    var phoneQuery = ""
+    var phonePage = 1
+    var phoneTargetGroup = -1
+
+    // ---- فونت فارسی (وزیرمتن) ----
+    var appFont: Typeface? = null
+
     val WA_GREEN_DARK: Int = Color.parseColor("#075E54")
     val WA_GREEN: Int = Color.parseColor("#128C7E")
     val WA_LIGHT_GREEN: Int = Color.parseColor("#25D366")
@@ -173,7 +194,7 @@ class MainActivity : AppCompatActivity() {
         if (granted) openPhoneContactPicker() else toast("اجازه دسترسی به مخاطبین داده نشد")
     }
     private val pickCsvLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) importCsv(uri)
+        if (uri != null) startCsvImport(uri)
     }
 
     /** درخواست زنجیره‌ای مجوزها — اندروید هم‌زمان فقط یک دیالوگ نشان می‌دهد.
@@ -213,9 +234,46 @@ class MainActivity : AppCompatActivity() {
     fun lbl(t: String, size: Float = 14f, bold: Boolean = false, color: Int = BLACK): TextView = TextView(this).apply { text = t; textSize = size; setTextColor(color); if (bold) setTypeface(typeface, Typeface.BOLD) }
     fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
+    /** پاک‌سازی کامل داده‌ی کاربر — بدون این کار، داده‌ی حساب قبلی روی صفحه می‌ماند. */
+    fun clearAllUserData() {
+        cacheGroups = JSONArray(); cacheContacts = JSONArray()
+        cacheCampaigns = JSONArray(); cacheTemplates = JSONArray()
+        groupsLoaded = false; contactsLoaded = false; campaignsLoaded = false; templatesLoaded = false
+        activeGroupFilter = -1
+        selectionMode = false; selectedContactIds.clear(); contactQuery = ""
+        phoneRows = ArrayList(); phoneSelected.clear(); phonePickerLoaded = false
+        phoneQuery = ""; phonePage = 1; phoneTargetGroup = -1
+        cacheOwnerUid = -1
+        Net.reset()
+    }
+
+    /** نگهبان: اگر داده‌ی کش مال کاربر فعلی نباشد، دور ریخته می‌شود. */
+    fun ensureCacheOwner() {
+        if (cacheOwnerUid != userId) { clearAllUserData(); cacheOwnerUid = userId }
+    }
+
+    private fun loadAppFont(): Typeface? = try { ResourcesCompat.getFont(this, R.font.vazirmatn) } catch (_: Exception) { null }
+
+    /** اعمال فونت روی کل درخت ویوها — چون رابط کاربری کاملاً کدنویسی شده است. */
+    fun applyFontDeep(v: View?) {
+        val f = appFont ?: return
+        if (v == null) return
+        if (v is TextView) {
+            val style = v.typeface?.style ?: Typeface.NORMAL
+            v.setTypeface(f, style and Typeface.BOLD)
+        }
+        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) applyFontDeep(v.getChildAt(i))
+    }
+
+    private val fontHierarchy = object : android.view.ViewGroup.OnHierarchyChangeListener {
+        override fun onChildViewAdded(parent: View?, child: View?) { applyFontDeep(child) }
+        override fun onChildViewRemoved(parent: View?, child: View?) {}
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         D = resources.displayMetrics.density
+        appFont = loadAppFont()
         prefs = getSharedPreferences("smspanel1", Context.MODE_PRIVATE)
         ensureRuntimePermissions()
         siteUrl = SITE_URL // fixed panel; ignore any old saved value
@@ -224,6 +282,8 @@ class MainActivity : AppCompatActivity() {
         username = prefs.getString("username", "") ?: ""
         root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(WHITE) }
         setContentView(root)
+        root.setOnHierarchyChangeListener(fontHierarchy)
+        applyFontDeep(root)
         if (userId == 0 || apiToken.isEmpty()) showLogin() else showMain()
     }
 
@@ -295,7 +355,14 @@ class MainActivity : AppCompatActivity() {
                     userId = obj.optInt("user_id")
                     apiToken = obj.optString("api_token")
                     if (userId == 0 || apiToken.isEmpty()) throw Exception("پاسخ نامعتبر از سرور")
+                    // ✔ تأیید هویت: توکن باید دقیقاً به همین کاربر تعلق داشته باشد
+                    val me = JSONObject(Net.call("$siteUrl/wp-json/smsp1/v1/me", apiToken, "GET", null))
+                    val meId = me.optInt("user_id", 0)
+                    if (meId != 0 && meId != userId) throw Exception("عدم تطابق هویت کاربر")
                     username = u
+                    // ✔ هیچ داده‌ای از حساب قبلی باقی نماند (رفع نشتی بین حساب‌ها)
+                    clearAllUserData()
+                    cacheOwnerUid = userId
                     Net.reset()
                     prefs.edit().putString("site", siteUrl).putString("username", u).putInt("uid", userId).putString("token", apiToken).apply()
                     runOnUiThread { showMain() }
@@ -312,6 +379,7 @@ class MainActivity : AppCompatActivity() {
     // ==================== MAIN SHELL ====================
 
     fun showMain() {
+        ensureCacheOwner()    // هیچ‌وقت داده‌ی حساب قبلی رندر نمی‌شود
         sheetBodyRef = null   // با برگشت به خانه، پیش‌نویس پاک می‌شود
         root.removeAllViews()
         topBar = LinearLayout(this).apply {
@@ -348,6 +416,7 @@ class MainActivity : AppCompatActivity() {
         val contentFrame = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         }
+        mainContent.setOnHierarchyChangeListener(fontHierarchy)
         contentFrame.addView(mainContent)
         root.addView(contentFrame)
         bottomNav = LinearLayout(this).apply {
@@ -405,6 +474,7 @@ class MainActivity : AppCompatActivity() {
     // ==================== CHATS / CAMPAIGNS TAB ====================
 
     fun showChatsTab(force: Boolean = false) {
+        ensureCacheOwner()
         if (force) campaignsLoaded = false
         mainContent.removeAllViews()
         tvTopTitle.text = "پیام‌ها"
@@ -437,7 +507,8 @@ class MainActivity : AppCompatActivity() {
                             // نشست باطل شده (توکن عوض شده یا هاست هدر را حذف کرده) — برگرد به لاگین
                             stopSendService()
                             prefs.edit().clear().apply()
-                            userId = 0; apiToken = ""
+                            userId = 0; apiToken = ""; username = ""
+                            clearAllUserData()
                             showLogin()
                             toast("نشست منقضی شد — دوباره وارد شو")
                         } else {
@@ -518,40 +589,405 @@ class MainActivity : AppCompatActivity() {
 
     // ==================== CONTACTS TAB ====================
 
+    /** نرمال‌سازی شماره: ارقام فارسی/عربی → لاتین و +98/0098/98 → 0... */
+    private fun normalizeMobile(raw: String): String? {
+        var x = raw.trim().replace(" ", "").replace("-", "").replace("(", "").replace(")", "").replace(".", "")
+        val fa = "۰۱۲۳۴۵۶۷۸۹"; val ar = "٠١٢٣٤٥٦٧٨٩"
+        val sb = StringBuilder()
+        for (ch in x) {
+            val i = fa.indexOf(ch); val j = ar.indexOf(ch)
+            sb.append(if (i in 0..9) ('0' + i) else if (j in 0..9) ('0' + j) else ch)
+        }
+        x = sb.toString()
+        if (x.startsWith("+98")) x = "0" + x.substring(3)
+        else if (x.startsWith("0098")) x = "0" + x.substring(4)
+        else if (x.startsWith("98") && x.length == 12) x = "0" + x.substring(2)
+        return if (Regex("^09\\d{9}$").matches(x)) x else null
+    }
+
+    private fun groupNameOf(id: Int): String {
+        for (i in 0 until cacheGroups.length()) {
+            try { val g = cacheGroups.getJSONObject(i); if (g.getInt("id") == id) return g.getString("name") } catch (_: Exception) {}
+        }
+        return if (id <= 0) "بدون گروه" else "گروه #$id"
+    }
+
+    private fun groupOptions(): Pair<ArrayList<String>, ArrayList<Int>> {
+        val names = ArrayList<String>(); val ids = ArrayList<Int>()
+        for (i in 0 until cacheGroups.length()) {
+            try { val g = cacheGroups.getJSONObject(i); names.add(g.getString("name")); ids.add(g.getInt("id")) } catch (_: Exception) {}
+        }
+        return Pair(names, ids)
+    }
+
+    /** انتخاب گروه مقصد؛ اگر گروهی وجود ندارد، اول دیالوگ ساخت گروه باز می‌شود. */
+    private fun pickGroup(title: String, onPick: (Int) -> Unit) {
+        val (names, ids) = groupOptions()
+        if (names.isEmpty()) {
+            showNewGroupDialog(refreshTab = false) { id -> if (id > 0) onPick(id) }
+            return
+        }
+        val items = ArrayList(names); items.add("➕ گروه جدید…")
+        AlertDialog.Builder(this).setTitle(title)
+            .setItems(items.toTypedArray()) { _, w ->
+                if (w >= names.size) showNewGroupDialog(refreshTab = false) { id -> if (id > 0) onPick(id) }
+                else onPick(ids[w])
+            }
+            .setNegativeButton("انصراف", null)
+            .show()
+    }
+
+    // ---------- افزودن مخاطب (دستی / گروهی / CSV) ----------
+
+    private fun addContactsToServer(payload: JSONArray, groupId: Int, onDone: ((Int, Int) -> Unit)? = null) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val res = postJson(getAuthUrl("contacts"), JSONObject().put("group_id", groupId).put("contacts", payload))
+                val o = JSONObject(res)
+                cacheContacts = JSONArray(); contactsLoaded = false
+                runOnUiThread {
+                    onDone?.invoke(o.optInt("inserted"), o.optInt("skipped"))
+                    showContactsTab(true)
+                }
+            } catch (e: Exception) {
+                runOnUiThread { toast("خطا: ${e.message?.take(100)}") }
+            }
+        }
+    }
+
+    /** افزودن شماره به‌صورت دستی — با «ذخیره و بعدی» برای وارد کردن پشت‌سرهم */
+    fun showAddContactDialog(startGroup: Int = activeGroupFilter) {
+        var group = startGroup
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(0)) }
+        val etName = EditText(this).apply {
+            hint = "نام و نام خانوادگی (اختیاری)"
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+        val etMobile = EditText(this).apply {
+            hint = "شماره موبایل ۰۹xxxxxxxxx"
+            inputType = android.text.InputType.TYPE_CLASS_PHONE
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(10), 0, dp(10)) }
+        }
+        val tvGroup = lbl("", 13f, true, WA_GREEN_DARK).apply {
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = rounded(GRAY_100, 10)
+            isClickable = true
+        }
+        fun refreshGroupLabel() { tvGroup.text = "گروه مقصد: " + (if (group > 0) groupNameOf(group) else "انتخاب کن ▾") }
+        refreshGroupLabel()
+        tvGroup.setOnClickListener { pickGroup("مخاطب به کدام گروه اضافه شود؟") { gid -> group = gid; refreshGroupLabel() } }
+        col.addView(etName); col.addView(etMobile); col.addView(tvGroup)
+
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("افزودن شماره دستی")
+            .setView(col)
+            .setPositiveButton("ذخیره", null)
+            .setNeutralButton("ذخیره + بعدی", null)
+            .setNegativeButton("انصراف", null)
+            .create()
+
+        fun save(keepOpen: Boolean) {
+            val mobile = normalizeMobile(etMobile.text.toString())
+            if (mobile == null) { toast("شماره معتبر نیست — مثل ۰۹۱۲۳۴۵۶۷۸۹"); return }
+            val name = etName.text.toString().trim()
+            fun doSave(gid: Int) {
+                val payload = JSONArray().put(JSONObject().put("name", name).put("mobile", mobile))
+                addContactsToServer(payload, gid) { ins, _ ->
+                    toast(if (ins > 0) "✔ «" + name.ifEmpty { mobile } + "» ثبت شد" else "این شماره قبلاً در گروه بوده")
+                }
+                if (keepOpen) { etName.setText(""); etMobile.setText(""); etName.requestFocus() } else dlg.dismiss()
+            }
+            if (group > 0) doSave(group)
+            else pickGroup("مخاطب به کدام گروه اضافه شود؟") { gid -> group = gid; refreshGroupLabel(); doSave(gid) }
+        }
+
+        dlg.setOnShowListener {
+            applyFontDeep(dlg.window?.decorView)
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { save(false) }
+            dlg.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { save(true) }
+        }
+        dlg.show()
+    }
+
+    /** افزودن گروهی با چسباندن متن — هر خط «نام,شماره» یا فقط «شماره» */
+    fun showBulkPasteDialog() {
+        val et = EditText(this).apply {
+            hint = "نام,۰۹۱۲۳۴۵۶۷۸۹\n۰۹۳۵۱۲۳۴۵۶۷\n…"
+            minLines = 6
+            gravity = Gravity.TOP or Gravity.START
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(0))
+            addView(lbl("لیست را از اکسل یا واتساپ کپی کن و همین‌جا پیست کن.", 12f, false, GRAY_500))
+            addView(et)
+        }
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("افزودن گروهی (پیست)")
+            .setView(box)
+            .setPositiveButton("ادامه", null)
+            .setNegativeButton("انصراف", null)
+            .create()
+        dlg.setOnShowListener {
+            applyFontDeep(dlg.window?.decorView)
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val payload = JSONArray()
+                var bad = 0
+                for (line in et.text.toString().lineSequence()) {
+                    val ln = line.trim()
+                    if (ln.isEmpty()) continue
+                    var found: String? = null
+                    for (tok in ln.split(",", ";", "|", "\t", " ")) {
+                        val m = normalizeMobile(tok)
+                        if (m != null) { found = m; break }
+                    }
+                    if (found == null) { bad++; continue }
+                    val namePart = ln.replace(Regex("[0-9۰-۹+][0-9۰-۹ +\\-()]{6,}"), "").replace(",", " ").trim()
+                    payload.put(JSONObject().put("name", namePart).put("mobile", found))
+                }
+                if (payload.length() == 0) { toast("شماره‌ی معتبری پیدا نشد"); return@setOnClickListener }
+                dlg.dismiss()
+                pickGroup("${payload.length()} مخاطب به کدام گروه اضافه شود؟") { gid ->
+                    addContactsToServer(payload, gid) { ins, skip ->
+                        var msg = "افزوده شد: $ins"
+                        if (skip > 0) msg += " • تکراری/نامعتبر: $skip"
+                        if (bad > 0) msg += " • خط نامعتبر: $bad"
+                        toast(msg)
+                    }
+                }
+            }
+        }
+        dlg.show()
+    }
+
+    // ---------- انتخاب از مخاطبین گوشی (تمام‌صفحه، با جستجو و انتخاب همه) ----------
+
+    private fun requestContactsThenPick() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            openPhoneContactPicker()
+        } else {
+            requestContactsPermission.launch(Manifest.permission.READ_CONTACTS)
+        }
+    }
+
+    private fun openPhoneContactPicker() {
+        phoneTargetGroup = if (activeGroupFilter > 0) activeGroupFilter else -1
+        phoneSelected.clear(); phoneQuery = ""; phonePage = 1
+        if (phonePickerLoaded) showPhonePickerScreen() else loadPhoneContacts()
+    }
+
+    private fun loadPhoneContacts() {
+        toast("در حال خواندن مخاطبین گوشی…")
+        scope.launch(Dispatchers.IO) {
+            val map = LinkedHashMap<String, Pair<String, String>>()
+            try {
+                val cur = contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    null, null, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC"
+                )
+                cur?.use { c ->
+                    while (c.moveToNext()) {
+                        val n = c.getString(0) ?: ""
+                        val m = normalizeMobile(c.getString(1) ?: "") ?: continue
+                        if (!map.containsKey(m)) map[m] = Pair(n, m)
+                    }
+                }
+            } catch (_: Exception) {}
+            phoneRows = ArrayList(map.values)
+            phonePickerLoaded = true
+            runOnUiThread {
+                if (phoneRows.isEmpty()) { toast("مخاطبی با شماره موبایل معتبر پیدا نشد"); showContactsTab() }
+                else showPhonePickerScreen()
+            }
+        }
+    }
+
+    private fun phoneFiltered(): ArrayList<Pair<String, String>> {
+        val q = phoneQuery.trim()
+        if (q.isEmpty()) return phoneRows
+        val out = ArrayList<Pair<String, String>>()
+        for (r in phoneRows) if (r.first.contains(q, true) || r.second.contains(q)) out.add(r)
+        return out
+    }
+
+    fun showPhonePickerScreen() {
+        ensureCacheOwner()
+        mainContent.removeAllViews()
+        tvTopTitle.text = "مخاطبین گوشی"
+        tvTopSub.text = "${phoneRows.size} مخاطب — تکی یا گروهی انتخاب کن"
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val tvGroup = lbl("", 13f, true, WA_GREEN_DARK).apply {
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = rounded(GRAY_100, 10)
+            isClickable = true
+        }
+        fun refreshGroup() { tvGroup.text = "گروه مقصد: " + (if (phoneTargetGroup > 0) groupNameOf(phoneTargetGroup) else "انتخاب کن ▾") }
+        refreshGroup()
+        tvGroup.setOnClickListener { pickGroup("مخاطبین به کدام گروه اضافه شوند؟") { gid -> phoneTargetGroup = gid; refreshGroup() } }
+        val groupRow = LinearLayout(this).apply { setPadding(dp(12), dp(8), dp(12), dp(2)) }
+        groupRow.addView(tvGroup, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        col.addView(groupRow)
+
+        val etSearch = EditText(this).apply {
+            hint = "🔍 جستجو در نام یا شماره…"
+            setText(phoneQuery)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = rounded(GRAY_200, 22)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(12), dp(8), dp(12), dp(6)) }
+        }
+        col.addView(etSearch)
+
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(2), dp(12), dp(6))
+        }
+        val tvCount = lbl("", 12f, true, WA_GREEN_DARK)
+        tvCount.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        val btnAll = lbl("", 12f, true, WA_GREEN).apply { isClickable = true; setPadding(dp(8), dp(6), dp(8), dp(6)) }
+        bar.addView(tvCount); bar.addView(btnAll)
+        col.addView(bar)
+
+        val scroll = ScrollView(this)
+        scroll.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val boxes = HashMap<String, CheckBox>()
+        val pageSize = 80
+
+        val btnAdd = Button(this).apply {
+            setTextColor(WHITE); background = rounded(WA_LIGHT_GREEN, 22); setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(12), dp(6), dp(12), dp(4)) }
+        }
+        val btnBack = Button(this).apply {
+            text = "بازگشت به مخاطبین"
+            background = roundedBorder(WHITE, 12, 1, GRAY_200); setTextColor(GRAY_500); textSize = 13f
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(12), 0, dp(12), dp(8)) }
+            setOnClickListener { showContactsTab() }
+        }
+
+        fun updateCounters() {
+            val filtered = phoneFiltered()
+            tvCount.text = "انتخاب‌شده: ${phoneSelected.size} از ${phoneRows.size}"
+            val allSel = filtered.isNotEmpty() && filtered.all { phoneSelected.contains(it.second) }
+            btnAll.text = if (allSel) "لغو انتخاب همه" else "انتخاب همه (${filtered.size})"
+            btnAdd.text = if (phoneSelected.size == 0) "افزودن به گروه" else "افزودن ${phoneSelected.size} نفر به «" + (if (phoneTargetGroup > 0) groupNameOf(phoneTargetGroup) else "…") + "»"
+        }
+
+        fun render() {
+            list.removeAllViews(); boxes.clear()
+            val filtered = phoneFiltered()
+            if (filtered.isEmpty()) {
+                list.addView(lbl("موردی پیدا نشد", 13f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(30), dp(16), dp(10)) })
+            }
+            val shown = filtered.take(pageSize * phonePage)
+            for (r in shown) {
+                val nm = r.first; val mob = r.second
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                }
+                val cb = CheckBox(this).apply { isChecked = phoneSelected.contains(mob) }
+                val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), 0, 0, 0) }
+                mid.addView(lbl(nm.ifEmpty { "بدون نام" }, 14f, true))
+                mid.addView(lbl(mob, 12f, false, GRAY_500))
+                row.addView(cb); row.addView(mid)
+                cb.setOnCheckedChangeListener { _, checked ->
+                    if (checked) phoneSelected.add(mob) else phoneSelected.remove(mob)
+                    updateCounters()
+                }
+                row.setOnClickListener { cb.isChecked = !cb.isChecked }
+                boxes[mob] = cb
+                list.addView(row)
+                list.addView(View(this).apply { setBackgroundColor(Color.parseColor("#EFEFEF")); layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)) })
+            }
+            if (filtered.size > shown.size) {
+                list.addView(Button(this).apply {
+                    text = "نمایش موردهای بعدی (${shown.size} از ${filtered.size})"
+                    textSize = 12f
+                    background = roundedBorder(WHITE, 10, 1, GRAY_200)
+                    setTextColor(WA_GREEN_DARK)
+                    setOnClickListener { phonePage++; render() }
+                })
+            }
+        }
+
+        btnAll.setOnClickListener {
+            val filtered = phoneFiltered()
+            val allSel = filtered.isNotEmpty() && filtered.all { phoneSelected.contains(it.second) }
+            if (allSel) filtered.forEach { phoneSelected.remove(it.second) }
+            else filtered.forEach { phoneSelected.add(it.second) }
+            for ((mob, cb) in boxes) cb.isChecked = phoneSelected.contains(mob)
+            updateCounters()
+        }
+
+        btnAdd.setOnClickListener {
+            if (phoneSelected.size == 0) { toast("اول چند مخاطب را انتخاب کن"); return@setOnClickListener }
+            fun doAdd(gid: Int) {
+                val payload = JSONArray()
+                for (r in phoneRows) {
+                    if (phoneSelected.contains(r.second)) {
+                        payload.put(JSONObject().put("name", r.first).put("mobile", r.second))
+                    }
+                }
+                addContactsToServer(payload, gid) { ins, skip -> toast("افزوده شد: $ins • تکراری: $skip") }
+                phoneSelected.clear()
+            }
+            if (phoneTargetGroup > 0) doAdd(phoneTargetGroup)
+            else pickGroup("مخاطبین به کدام گروه اضافه شوند؟") { gid -> phoneTargetGroup = gid; doAdd(gid) }
+        }
+
+        etSearch.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) { phoneQuery = s?.toString() ?: ""; phonePage = 1; render(); updateCounters() }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+
+        scroll.addView(list)
+        col.addView(scroll)
+        col.addView(btnAdd)
+        col.addView(btnBack)
+        mainContent.addView(col)
+        render(); updateCounters()
+    }
+
+    // ---------- تب مخاطبین ----------
+
     fun showContactsTab(force: Boolean = false) {
+        ensureCacheOwner()
         if (force) { contactsLoaded = false; groupsLoaded = false }
         mainContent.removeAllViews()
         tvTopTitle.text = "مخاطبین"
-        tvTopSub.text = "همه مخاطبین"
+        tvTopSub.text = if (activeGroupFilter == -1) "همه مخاطبین" else "گروه: ${groupNameOf(activeGroupFilter)}"
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val importRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(12), dp(8), dp(12), dp(4))
+        // ---- نوار ابزار ----
+        val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(6), dp(6), dp(6), 0) }
+        fun tool(icon: String, title: String, color: Int, onClick: () -> Unit) {
+            val v = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                isClickable = true
+                setPadding(dp(2), dp(8), dp(2), dp(8))
+                setOnClickListener { onClick() }
+            }
+            v.addView(lbl(icon, 20f, false, color).apply { gravity = Gravity.CENTER })
+            v.addView(lbl(title, 10f, true, color).apply { gravity = Gravity.CENTER })
+            tools.addView(v)
         }
-        val btnImportPhone = Button(this).apply {
-            text = "📱 از مخاطبین گوشی"; textSize = 12f; setTextColor(WHITE)
-            background = rounded(WA_GREEN, 18)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(0, 0, dp(6), 0) }
-            setOnClickListener { requestContactsThenPick() }
-        }
-        val btnImportCsv = Button(this).apply {
-            text = "📄 از فایل CSV"; textSize = 12f; setTextColor(WHITE)
-            background = rounded(WA_GREEN_DARK, 18)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(6), 0, 0, 0) }
-            setOnClickListener { requireGroupThen { pickCsvLauncher.launch(arrayOf("text/*")) } }
-        }
-        importRow.addView(btnImportPhone); importRow.addView(btnImportCsv)
-        container.addView(importRow)
+        tool("✍️", "شماره جدید", WA_GREEN_DARK) { showAddContactDialog() }
+        tool("📱", "از گوشی", WA_GREEN_DARK) { requestContactsThenPick() }
+        tool("📋", "پیست گروهی", WA_GREEN_DARK) { showBulkPasteDialog() }
+        tool("📄", "فایل CSV", WA_GREEN_DARK) { pickCsvLauncher.launch(arrayOf("text/*")) }
+        if (selectionMode) tool("✖️", "پایان", ORANGE) { selectionMode = false; selectedContactIds.clear(); showContactsTab() }
+        else tool("🗑", "حذف", Color.parseColor("#C0392B")) { selectionMode = true; selectedContactIds.clear(); showContactsTab() }
+        container.addView(tools)
 
-        val search = EditText(this).apply {
-            hint = "جستجوی نام یا شماره..."
-            background = rounded(GRAY_200, 24)
-            setPadding(dp(16), dp(10), dp(16), dp(10))
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(12), dp(8), dp(12), dp(8)) }
-        }
+        // ---- چیپ گروه‌ها ----
         val chipScroll = HorizontalScrollView(this)
-        val chipContainer = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), dp(4), dp(8), dp(4)) }
+        val chipContainer = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), dp(6), dp(8), dp(4)) }
         fun addChip(name: String, id: Int, active: Boolean = false) {
             val chip = TextView(this).apply {
                 text = name; textSize = 13f
@@ -564,7 +1000,6 @@ class MainActivity : AppCompatActivity() {
             }
             chipContainer.addView(chip)
         }
-        chipContainer.removeAllViews()
         addChip("همه", -1, activeGroupFilter == -1)
         for (i in 0 until cacheGroups.length()) {
             try {
@@ -572,9 +1007,7 @@ class MainActivity : AppCompatActivity() {
                 addChip(g.getString("name"), g.getInt("id"), activeGroupFilter == g.getInt("id"))
             } catch (_: Exception) {}
         }
-        // دکمه‌ی ساخت گروه — قبلاً در اپ هیچ راهی برای ساخت گروه وجود نداشت و
-        // کاربر تازه نمی‌توانست هیچ مخاطبی اضافه کند یا پیامی بفرستد.
-        val newGroupChip = TextView(this).apply {
+        val chipNew = TextView(this).apply {
             text = "➕ گروه جدید"; textSize = 13f
             setPadding(dp(14), dp(8), dp(14), dp(8))
             background = roundedBorder(WHITE, 20, 1, WA_GREEN)
@@ -583,9 +1016,18 @@ class MainActivity : AppCompatActivity() {
             isClickable = true
             setOnClickListener { showNewGroupDialog() }
         }
-        chipContainer.addView(newGroupChip)
+        chipContainer.addView(chipNew)
+        val chipManage = TextView(this).apply {
+            text = "🗂 مدیریت"; textSize = 13f
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            background = roundedBorder(WHITE, 20, 1, Color.parseColor("#C0392B"))
+            setTextColor(Color.parseColor("#C0392B"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(4), 0, dp(4), 0) }
+            isClickable = true
+            setOnClickListener { showGroupManager() }
+        }
+        chipContainer.addView(chipManage)
         if (cacheGroups.length() == 0 && !groupsLoaded) {
-            // ⚠️ اینجا هم شرط فقط length بود → برای کاربر بدون گروه، حلقه‌ی بی‌نهایت درخواست.
             groupsLoaded = true
             scope.launch(Dispatchers.IO) {
                 try { cacheGroups = JSONArray(getAuth("groups")); runOnUiThread { showContactsTab() } }
@@ -593,155 +1035,329 @@ class MainActivity : AppCompatActivity() {
             }
         }
         chipScroll.addView(chipContainer)
+        container.addView(chipScroll)
+
+        // ---- جستجو ----
+        val search = EditText(this).apply {
+            hint = "🔍 جستجوی نام یا شماره…"
+            setText(contactQuery)
+            background = rounded(GRAY_200, 22)
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(12), dp(2), dp(12), dp(6)) }
+        }
+        container.addView(search)
+
         val scroll = ScrollView(this)
+        scroll.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        fun renderContacts(filterGroup: Int = activeGroupFilter, searchText: String = "") {
-            list.removeAllViews()
-            var count = 0
+
+        // ---- نوار انتخاب (فقط در حالت حذف) ----
+        val selBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(Color.parseColor("#FFF6E5"))
+        }
+        val tvSelCount = lbl("", 12f, true, Color.parseColor("#8A5A00"))
+        tvSelCount.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        selBar.addView(tvSelCount)
+        val btnSelAll = lbl("انتخاب همه", 12f, true, WA_GREEN_DARK).apply { isClickable = true; setPadding(dp(8), dp(6), dp(8), dp(6)) }
+        val btnDelSel = lbl("🗑 حذف انتخاب‌شده‌ها", 12f, true, Color.parseColor("#C0392B")).apply { isClickable = true; setPadding(dp(8), dp(6), dp(8), dp(6)) }
+        val btnDelAll = lbl("حذف همه‌ی گروه", 12f, true, Color.parseColor("#C0392B")).apply { isClickable = true; setPadding(dp(8), dp(6), dp(8), dp(6)) }
+        selBar.addView(btnSelAll); selBar.addView(btnDelSel)
+        if (activeGroupFilter != -1) selBar.addView(btnDelAll)
+
+        fun visibleContacts(): ArrayList<JSONObject> {
+            val out = ArrayList<JSONObject>()
+            val q = contactQuery.trim()
             for (i in 0 until cacheContacts.length()) {
                 try {
                     val c = cacheContacts.getJSONObject(i)
-                    if (filterGroup != -1 && c.optInt("group_id", -1) != filterGroup) continue
-                    if (searchText.isNotEmpty()) {
-                        val name = c.optString("name", ""); val mobile = c.optString("mobile", "")
-                        if (!name.contains(searchText, true) && !mobile.contains(searchText)) continue
+                    if (activeGroupFilter != -1 && c.optInt("group_id", -1) != activeGroupFilter) continue
+                    if (q.isNotEmpty()) {
+                        val nm = c.optString("name", ""); val mb = c.optString("mobile", "")
+                        if (!nm.contains(q, true) && !mb.contains(q)) continue
                     }
-                    val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(12), dp(10), dp(12), dp(10)); gravity = Gravity.CENTER_VERTICAL }
-                    val av = TextView(this).apply {
-                        text = c.optString("name", "?").take(1).uppercase()
-                        gravity = Gravity.CENTER; setTextColor(WHITE); textSize = 14f
-                        background = rounded(Color.parseColor("#${Integer.toHexString((c.optString("mobile", "0").hashCode() and 0xFFFFFF) or 0x808080)}"), 20)
-                        layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
-                    }
-                    val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
-                    mid.addView(lbl(c.optString("name", "بدون نام"), 14f, true))
-                    mid.addView(lbl(c.optString("mobile", ""), 12f, false, GRAY_500))
-                    row.addView(av); row.addView(mid)
-                    list.addView(row)
-                    count++
-                    if (count > 300) break
+                    out.add(c)
                 } catch (_: Exception) {}
             }
-            if (count == 0) list.addView(lbl("مخاطبی یافت نشد", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
+            return out
         }
+
+        fun refreshSelectionBar() {
+            tvSelCount.text = "انتخاب‌شده: ${selectedContactIds.size} از ${visibleContacts().size}"
+        }
+
+        fun renderList() {
+            list.removeAllViews()
+            val items = visibleContacts()
+            if (items.isEmpty()) {
+                list.addView(lbl(
+                    if (contactQuery.isEmpty()) "مخاطبی نیست — با دکمه‌های بالا اضافه کن" else "موردی پیدا نشد",
+                    13f, false, GRAY_500
+                ).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(30), dp(16), dp(16)) })
+                return
+            }
+            for (c in items) {
+                val id = c.optInt("id", 0)
+                val nm = c.optString("name", "").ifEmpty { "بدون نام" }
+                val mb = c.optString("mobile", "")
+                val gid = c.optInt("group_id", -1)
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(12), dp(9), dp(12), dp(9))
+                }
+                if (selectionMode) {
+                    val cb = CheckBox(this).apply { isChecked = selectedContactIds.contains(id) }
+                    cb.setOnCheckedChangeListener { _, checked ->
+                        if (checked) selectedContactIds.add(id) else selectedContactIds.remove(id)
+                        refreshSelectionBar()
+                    }
+                    row.addView(cb)
+                } else {
+                    val av = TextView(this).apply {
+                        text = nm.take(1).uppercase()
+                        gravity = Gravity.CENTER; setTextColor(WHITE); textSize = 15f
+                        background = rounded(Color.parseColor("#128C7E"), 20)
+                        layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+                    }
+                    row.addView(av)
+                }
+                val mid = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(dp(10), 0, 0, 0)
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                }
+                mid.addView(lbl(nm, 14f, true))
+                mid.addView(lbl(mb, 12f, false, GRAY_500))
+                row.addView(mid)
+                row.addView(lbl(groupNameOf(gid), 10f, false, GRAY_500).apply { setPadding(dp(6), 0, dp(4), 0) })
+                row.setOnClickListener {
+                    if (selectionMode) {
+                        if (selectedContactIds.contains(id)) selectedContactIds.remove(id) else selectedContactIds.add(id)
+                        showContactsTab()
+                    } else showContactActions(id, nm, mb, gid)
+                }
+                list.addView(row)
+                list.addView(View(this).apply {
+                    setBackgroundColor(Color.parseColor("#F1F1F1"))
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { setMargins(dp(56), 0, 0, 0) }
+                })
+            }
+            refreshSelectionBar()
+        }
+
+        btnSelAll.setOnClickListener {
+            val items = visibleContacts()
+            if (items.isNotEmpty() && selectedContactIds.size >= items.size) selectedContactIds.clear()
+            else for (c in items) selectedContactIds.add(c.optInt("id", 0))
+            showContactsTab()
+        }
+        btnDelSel.setOnClickListener { deleteContactsByIds(selectedContactIds.toList()) }
+        btnDelAll.setOnClickListener { confirmDeleteAllInGroup(activeGroupFilter) }
+
         if (cacheContacts.length() == 0 && !contactsLoaded) {
             contactsLoaded = true
             scope.launch(Dispatchers.IO) {
                 try { cacheContacts = JSONArray(getAuth("contacts")); runOnUiThread { showContactsTab() } }
                 catch (_: Exception) { contactsLoaded = false }
             }
-        } else renderContacts()
+        } else renderList()
+
         search.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) { renderContacts(searchText = s.toString()) }
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) { contactQuery = s?.toString() ?: ""; renderList() }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
+
         scroll.addView(list)
-        container.addView(search); container.addView(chipScroll); container.addView(scroll)
+        container.addView(scroll)
+        if (selectionMode) container.addView(selBar)
         mainContent.addView(container)
     }
 
     fun filterContactsByGroup(groupId: Int, groupName: String) {
         activeGroupFilter = groupId
+        selectedContactIds.clear()
         tvTopSub.text = if (groupId == -1) "همه مخاطبین" else "گروه: $groupName"
         showContactsTab()
     }
 
-    /** اطمینان از انتخاب یک گروه مقصد قبل از ایمپورت؛ اگر گروهی انتخاب نشده، اول انتخاب گروه را می‌خواهد */
-    private fun requireGroupThen(action: () -> Unit) {
-        if (activeGroupFilter != -1) { action(); return }
-        if (cacheGroups.length() == 0) { toast("اول یک گروه بساز"); return }
-        val names = ArrayList<String>(); val ids = ArrayList<Int>()
-        for (i in 0 until cacheGroups.length()) {
-            val g = cacheGroups.getJSONObject(i); names.add(g.getString("name")); ids.add(g.getInt("id"))
-        }
+    /** گزینه‌های هر مخاطب: تغییر نام، انتقال به گروه دیگر، حذف */
+    private fun showContactActions(id: Int, name: String, mobile: String, groupId: Int) {
+        val opts = arrayOf("✏️ تغییر نام", "🔀 انتقال به گروه دیگر", "🗑 حذف این مخاطب")
         AlertDialog.Builder(this)
-            .setTitle("افزودن به کدام گروه؟")
-            .setItems(names.toTypedArray()) { _, which -> activeGroupFilter = ids[which]; action() }
+            .setTitle("$name\n$mobile")
+            .setItems(opts) { _, w ->
+                when (w) {
+                    0 -> {
+                        val et = EditText(this).apply {
+                            setText(if (name == "بدون نام") "" else name)
+                            setPadding(dp(16), dp(12), dp(16), dp(12))
+                        }
+                        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), dp(0)); addView(et) }
+                        AlertDialog.Builder(this).setTitle("نام جدید").setView(box)
+                            .setPositiveButton("ذخیره") { _, _ -> updateContact(id, et.text.toString().trim(), null) }
+                            .setNegativeButton("انصراف", null).show()
+                    }
+                    1 -> pickGroup("انتقال به کدام گروه؟") { gid -> if (gid != groupId) updateContact(id, null, gid) }
+                    2 -> deleteContactsByIds(listOf(id))
+                }
+            }
+            .setNegativeButton("بستن", null)
             .show()
     }
 
-    // ---- import from phone contacts ----
-    private fun requestContactsThenPick() {
-        requireGroupThen {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
-                openPhoneContactPicker()
-            } else {
-                requestContactsPermission.launch(Manifest.permission.READ_CONTACTS)
+    private fun updateContact(id: Int, newName: String?, newGroup: Int?) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val body = JSONObject().put("id", id)
+                if (newName != null) body.put("name", newName)
+                if (newGroup != null) body.put("group_id", newGroup)
+                postJson(getAuthUrl("contacts/update"), body)
+                cacheContacts = JSONArray(); contactsLoaded = false
+                runOnUiThread { toast("ذخیره شد"); showContactsTab(true) }
+            } catch (e: Exception) {
+                runOnUiThread { toast("خطا: ${e.message?.take(90)}") }
             }
         }
     }
 
-    private fun openPhoneContactPicker() {
-        val names = ArrayList<String>(); val numbers = ArrayList<String>()
-        val cursor: Cursor? = contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
-            null, null, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC"
-        )
-        cursor?.use {
-            while (it.moveToNext()) {
-                names.add(it.getString(0) ?: "")
-                numbers.add(it.getString(1) ?: "")
-            }
-        }
-        if (names.isEmpty()) { toast("مخاطبی پیدا نشد"); return }
-        val checked = BooleanArray(names.size)
-        val labels = Array(names.size) { i -> "${names[i]}  —  ${numbers[i]}" }
+    private fun deleteContactsByIds(ids: List<Int>) {
+        if (ids.isEmpty()) { toast("موردی انتخاب نشده"); return }
         AlertDialog.Builder(this)
-            .setTitle("انتخاب مخاطبین (${names.size})")
-            .setMultiChoiceItems(labels, checked) { _, which, isChecked -> checked[which] = isChecked }
-            .setPositiveButton("افزودن") { _, _ ->
-                val payload = JSONArray()
-                for (i in names.indices) if (checked[i]) payload.put(JSONObject().put("name", names[i]).put("mobile", numbers[i]))
-                if (payload.length() == 0) { toast("چیزی انتخاب نشد"); return@setPositiveButton }
-                bulkAddContacts(payload)
+            .setTitle("حذف مخاطب")
+            .setMessage("${ids.size} مخاطب حذف شود؟ این کار برگشت‌پذیر نیست.")
+            .setPositiveButton("حذف") { _, _ ->
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val res = Net.call(getAuthUrl("contacts") + "?ids=" + ids.joinToString(","), apiToken, "DELETE", null)
+                        val n = JSONObject(res).optInt("deleted")
+                        cacheContacts = JSONArray(); contactsLoaded = false
+                        runOnUiThread {
+                            toast("حذف شد: $n")
+                            selectionMode = false; selectedContactIds.clear()
+                            showContactsTab(true)
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread { toast("خطا: ${e.message?.take(90)}") }
+                    }
+                }
             }
             .setNegativeButton("انصراف", null)
             .show()
     }
 
-    // ---- import from CSV file (name,mobile per line) ----
-    private fun importCsv(uri: Uri) {
+    private fun confirmDeleteAllInGroup(groupId: Int) {
+        val n = visibleContactsCountOf(groupId)
+        AlertDialog.Builder(this)
+            .setTitle("حذف همه‌ی مخاطبین گروه")
+            .setMessage("همه‌ی مخاطبین گروه «${groupNameOf(groupId)}» ($n نفر) حذف شوند؟")
+            .setPositiveButton("حذف همه") { _, _ ->
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val res = Net.call(getAuthUrl("contacts") + "?group_id=$groupId", apiToken, "DELETE", null)
+                        val n2 = JSONObject(res).optInt("deleted")
+                        cacheContacts = JSONArray(); contactsLoaded = false
+                        runOnUiThread {
+                            toast("حذف شد: $n2")
+                            selectionMode = false; selectedContactIds.clear()
+                            showContactsTab(true)
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread { toast("خطا: ${e.message?.take(90)}") }
+                    }
+                }
+            }
+            .setNegativeButton("انصراف", null)
+            .show()
+    }
+
+    private fun visibleContactsCountOf(groupId: Int): Int {
+        var n = 0
+        for (i in 0 until cacheContacts.length()) {
+            try { if (cacheContacts.getJSONObject(i).optInt("group_id", -1) == groupId) n++ } catch (_: Exception) {}
+        }
+        return n
+    }
+
+    /** مدیریت گروه‌ها: حذف گروه (با مخاطبینش) */
+    fun showGroupManager() {
+        val (names, ids) = groupOptions()
+        if (names.isEmpty()) { toast("هنوز گروهی نساخته‌ای"); return }
+        val items = Array(names.size) { i -> "🗑 حذف گروه «${names[i]}» (${visibleContactsCountOf(ids[i])} مخاطب)" }
+        AlertDialog.Builder(this)
+            .setTitle("مدیریت گروه‌ها")
+            .setItems(items) { _, w ->
+                val gid = ids[w]; val nm = names[w]
+                AlertDialog.Builder(this)
+                    .setTitle("حذف گروه")
+                    .setMessage("گروه «$nm» و همه‌ی مخاطبینش حذف شوند؟")
+                    .setPositiveButton("حذف") { _, _ ->
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                Net.call(getAuthUrl("groups") + "?id=$gid", apiToken, "DELETE", null)
+                                cacheGroups = JSONArray(); groupsLoaded = false
+                                cacheContacts = JSONArray(); contactsLoaded = false
+                                runOnUiThread {
+                                    if (activeGroupFilter == gid) activeGroupFilter = -1
+                                    toast("گروه حذف شد")
+                                    showContactsTab(true)
+                                }
+                            } catch (e: Exception) {
+                                runOnUiThread { toast("خطا: ${e.message?.take(90)}") }
+                            }
+                        }
+                    }
+                    .setNegativeButton("انصراف", null).show()
+            }
+            .setNegativeButton("بستن", null)
+            .show()
+    }
+
+    // ---------- CSV ----------
+
+    private fun startCsvImport(uri: Uri) {
+        pickGroup("مخاطبین این فایل به کدام گروه اضافه شوند؟") { gid -> importCsv(uri, gid) }
+    }
+
+    private fun importCsv(uri: Uri, groupId: Int) {
         scope.launch(Dispatchers.IO) {
             try {
                 val text = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
                 val payload = JSONArray()
+                var bad = 0
                 for (line in text.lineSequence()) {
-                    val cols = line.split(",", ";").map { it.trim() }
-                    if (cols.isEmpty()) continue
-                    val mobileCol = cols.firstOrNull { it.replace(" ", "").matches(Regex("^0?9[0-9]{9}$|^\\+?989[0-9]{9}$")) }
-                    if (mobileCol == null) continue // خط بدون شماره معتبر، رد شود (مثلاً سطر هدر)
-                    val nameCol = cols.firstOrNull { it != mobileCol } ?: ""
-                    payload.put(JSONObject().put("name", nameCol).put("mobile", mobileCol))
+                    val ln = line.trim()
+                    if (ln.isEmpty()) continue
+                    var found: String? = null
+                    for (tok in ln.split(",", ";", "|", "\t")) {
+                        val m = normalizeMobile(tok)
+                        if (m != null) { found = m; break }
+                    }
+                    if (found == null) { bad++; continue }
+                    val namePart = ln.replace(Regex("[0-9۰-۹+][0-9۰-۹ +\\-()]{6,}"), "").replace(",", " ").replace(";", " ").trim()
+                    payload.put(JSONObject().put("name", namePart).put("mobile", found))
                 }
-                if (payload.length() == 0) { runOnUiThread { toast("هیچ شماره معتبری در فایل پیدا نشد") }; return@launch }
-                runOnUiThread { bulkAddContacts(payload) }
+                if (payload.length() == 0) {
+                    runOnUiThread { toast("هیچ شماره معتبری در فایل پیدا نشد") }
+                    return@launch
+                }
+                runOnUiThread {
+                    addContactsToServer(payload, groupId) { ins, skip ->
+                        var msg = "افزوده شد: $ins"
+                        if (skip > 0) msg += " • تکراری/نامعتبر: $skip"
+                        if (bad > 0) msg += " • خط رد‌شده: $bad"
+                        toast(msg)
+                    }
+                }
             } catch (e: Exception) {
                 runOnUiThread { toast("خطا در خواندن فایل: ${e.message?.take(80)}") }
             }
         }
     }
 
-    private fun bulkAddContacts(contacts: JSONArray) {
-        val groupId = activeGroupFilter
-        scope.launch(Dispatchers.IO) {
-            try {
-                val res = postJson(getAuthUrl("contacts"), JSONObject().put("group_id", groupId).put("contacts", contacts))
-                val obj = JSONObject(res)
-                cacheContacts = JSONArray() // اجبار به رفرش
-                runOnUiThread {
-                    toast("افزوده شد: ${obj.optInt("inserted")} • تکراری/نامعتبر: ${obj.optInt("skipped")}")
-                    showContactsTab(true)
-                }
-            } catch (e: Exception) {
-                runOnUiThread { toast("خطا: ${e.message?.take(100)}") }
-            }
-        }
-    }
+    // ---------- ساخت گروه ----------
 
-    // ---- ساخت گروه جدید ----
-    fun showNewGroupDialog() {
+    fun showNewGroupDialog(refreshTab: Boolean = true, onCreated: (Int) -> Unit = {}) {
         val et = EditText(this).apply {
             hint = "مثلاً: مشتریان"
             setPadding(dp(16), dp(12), dp(16), dp(12))
@@ -764,9 +1380,10 @@ class MainActivity : AppCompatActivity() {
                         cacheGroups = JSONArray(getAuth("groups"))
                         groupsLoaded = true
                         runOnUiThread {
-                            if (newId > 0) activeGroupFilter = newId
+                            if (newId > 0 && activeGroupFilter == -1) activeGroupFilter = newId
                             toast("گروه «$name» ساخته شد")
-                            showContactsTab()
+                            onCreated(newId)
+                            if (refreshTab) showContactsTab()
                         }
                     } catch (e: Exception) {
                         runOnUiThread { toast("خطا: ${e.message?.take(90)}") }
@@ -1060,7 +1677,13 @@ class MainActivity : AppCompatActivity() {
             when (which) {
                 0 -> showSettingsTab()
                 1 -> { stopSendService(); toast("ارسال متوقف شد") }
-                2 -> { stopSendService(); Net.reset(); prefs.edit().clear().apply(); showLogin() }
+                2 -> {
+                    stopSendService()
+                    prefs.edit().clear().apply()
+                    userId = 0; apiToken = ""; username = ""
+                    clearAllUserData()
+                    showLogin()
+                }
             }
         }).show()
     }
