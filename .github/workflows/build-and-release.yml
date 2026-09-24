@@ -1,0 +1,72 @@
+# Combined workflow: build Android APK + zip WordPress plugin, attach both to a Release.
+# Path: .github/workflows/build-and-release.yml
+name: Build APK & Plugin
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+      - name: Accept Android SDK licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk smspanel1-debug.apk
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: smspanel-debug-apk
+          path: smspanel1-debug.apk
+
+  zip-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip WordPress plugin
+        run: |
+          cd wordpress-plugin
+          zip -r ../mahdinikzad-sms-gateway.zip mahdinikzad-sms-gateway
+      - name: Upload plugin zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: mahdinikzad-sms-gateway-plugin
+          path: mahdinikzad-sms-gateway.zip
+
+  release:
+    needs: [build-android, zip-plugin]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Create GitHub Release (APK + plugin)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v1.0.${{ github.run_number }}"
+          gh release create "$TAG" \
+            dist/smspanel-debug-apk/smspanel1-debug.apk \
+            dist/mahdinikzad-sms-gateway-plugin/mahdinikzad-sms-gateway.zip \
+            --title "SmsPanel1 $TAG" \
+            --generate-notes
