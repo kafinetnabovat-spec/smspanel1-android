@@ -3,7 +3,7 @@
  * Plugin Name: MahdiNikzad SMS Gateway
  * Plugin URI: https://mahdinikzad.ir
  * Description: بک‌اند اپ SmsPanel — مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
- * Version: 4.1.0
+ * Version: 4.1.1
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: Mahdi Nikzad
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SMSP1_VERSION', '4.1.0');
+define('SMSP1_VERSION', '4.1.1');
 define('SMSP1_SLUG', 'mahdinikzad-sms-gateway/mahdinikzad-sms-gateway.php');
 define('SMSP1_LICENSE_ACTIVE_META', '_smsp1_license_active');
 define('SMSP1_LICENSE_EXPIRES_META', '_smsp1_license_expires');
@@ -106,9 +106,15 @@ function smsp1_activate() {
 
 // ---------- auth ----------
 function smsp1_token_user_id(WP_REST_Request $req) {
+    // 1) standard header (may be stripped by some shared hosts)
+    $token = '';
     $header = $req->get_header('Authorization');
-    if (!$header || !preg_match('/Bearer\s+(\S+)/', $header, $m)) return 0;
-    $token = $m[1];
+    if ($header && preg_match('/Bearer\s+(\S+)/', $header, $m)) $token = $m[1];
+    // 2) fallback header (survives hosts that drop Authorization)
+    if (!$token) $token = trim((string) $req->get_header('X-SMSP1-Token'));
+    // 3) last-resort param (only over HTTPS; header path is preferred)
+    if (!$token) $token = trim((string) $req->get_param('api_token'));
+    if (!$token || strlen($token) > 100) return 0;
     global $wpdb;
     $users = get_users(['meta_key' => SMSP1_TOKEN_META, 'meta_value' => $token, 'fields' => ['ID']]);
     if (empty($users)) return 0;
