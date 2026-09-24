@@ -1,7 +1,7 @@
 === MahdiNikzad SMS Gateway ===
 Requires PHP: 8.0
 Requires at least: 6.0
-Version: 4.0.0
+Version: 4.4.0
 
 بک‌اند اپ SmsPanel: مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
 
