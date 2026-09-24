@@ -39,6 +39,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -109,7 +110,12 @@ object JalaliCalendar {
 
 class MainActivity : AppCompatActivity() {
 
-    var siteUrl: String = "https://mahdinikzad.ir"
+    companion object {
+        // Single-tenant: every customer uses the same panel, no URL field in login UI
+        const val SITE_URL: String = "https://mahdinikzad.ir"
+    }
+
+    var siteUrl: String = SITE_URL
     var userId: Int = 0
     var apiToken: String = ""
     var username: String = ""
@@ -170,7 +176,7 @@ class MainActivity : AppCompatActivity() {
         D = resources.displayMetrics.density
         prefs = getSharedPreferences("smspanel1", Context.MODE_PRIVATE)
         requestSmsPermission.launch(Manifest.permission.SEND_SMS)
-        siteUrl = prefs.getString("site", siteUrl) ?: siteUrl
+        siteUrl = SITE_URL // fixed panel; ignore any old saved value
         userId = prefs.getInt("uid", 0)
         apiToken = prefs.getString("token", "") ?: ""
         username = prefs.getString("username", "") ?: ""
@@ -214,11 +220,6 @@ class MainActivity : AppCompatActivity() {
         container.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(16)) })
         container.addView(lbl("پنل پیامکی", 22f, true, BLACK).apply { gravity = Gravity.CENTER })
         container.addView(lbl("ارسال با سیم‌کارت خودت", 13f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(24)) })
-        val etSite = EditText(this).apply {
-            hint = "آدرس سایت: https://yoursite.com"; setText(siteUrl)
-            background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-        }
         val etUser = EditText(this).apply {
             hint = "نام کاربری"; setText(username)
             background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))
@@ -239,8 +240,7 @@ class MainActivity : AppCompatActivity() {
         }
         val msg = lbl("", 12f, false, Color.RED).apply { gravity = Gravity.CENTER; setPadding(0, dp(12), 0, 0) }
         btn.setOnClickListener {
-            siteUrl = etSite.text.toString().trim().trimEnd('/')
-            if (!siteUrl.startsWith("http")) siteUrl = "https://$siteUrl"
+            siteUrl = SITE_URL
             val u = etUser.text.toString().trim()
             val p = etPass.text.toString()
             if (u.isEmpty() || p.isEmpty()) { msg.text = "نام کاربری و رمز را وارد کن"; return@setOnClickListener }
@@ -261,7 +261,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        container.addView(etSite); container.addView(etUser); container.addView(etPass); container.addView(btn); container.addView(msg)
+        container.addView(etUser); container.addView(etPass); container.addView(btn); container.addView(msg)
         scroll.addView(container)
         root.addView(scroll)
     }
@@ -824,6 +824,8 @@ class MainActivity : AppCompatActivity() {
     fun getAuthUrl(path: String): String = "$siteUrl/wp-json/smsp1/v1/$path"
 
     fun postJson(urlStr: String, payload: JSONObject): String {
+        // belt-and-braces: token also in body (hosts stripping headers still work)
+        if (apiToken.isNotEmpty() && !payload.has("api_token")) payload.put("api_token", apiToken)
         val c = (URL(urlStr).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; doOutput = true
             connectTimeout = 20000; readTimeout = 20000
@@ -857,7 +859,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun getAuth(path: String): String {
-        val c = (URL(getAuthUrl(path)).openConnection() as HttpURLConnection).apply {
+        // belt-and-braces: token also in query (hosts stripping headers still work; HTTPS protects transit)
+        val url = getAuthUrl(path) + "?api_token=" + URLEncoder.encode(apiToken, "UTF-8")
+        val c = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20000; readTimeout = 20000
             setRequestProperty("Authorization", "Bearer $apiToken")
             setRequestProperty("X-SMSP1-Token", apiToken)
