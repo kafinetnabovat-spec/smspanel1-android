@@ -3,7 +3,7 @@
  * Plugin Name: MahdiNikzad SMS Gateway
  * Plugin URI: https://mahdinikzad.ir
  * Description: بک‌اند اپ SmsPanel — مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
- * Version: 4.0.0
+ * Version: 4.1.0
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: Mahdi Nikzad
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SMSP1_VERSION', '4.0.0');
+define('SMSP1_VERSION', '4.1.0');
 define('SMSP1_SLUG', 'mahdinikzad-sms-gateway/mahdinikzad-sms-gateway.php');
 define('SMSP1_LICENSE_ACTIVE_META', '_smsp1_license_active');
 define('SMSP1_LICENSE_EXPIRES_META', '_smsp1_license_expires');
