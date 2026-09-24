@@ -3,6 +3,11 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// امضای ریلیز: اگر متغیرهای محیطی کی‌استور ست باشند (GitHub Secrets)، APK ریلیز امضا می‌شود.
+// بدون آن‌ها بیلد ریلیز بدون امضا می‌ماند و ورک‌فلو خودش به APK دیباگ برمی‌گردد.
+def ksPath = System.getenv("KEYSTORE_FILE") ?: project.findProperty("KEYSTORE_FILE")
+def hasKeystore = ksPath != null && file(ksPath).exists()
+
 android {
     namespace 'com.smspanel1.app'
     compileSdk 34
@@ -10,11 +15,24 @@ android {
         applicationId "com.smspanel1.app"
         minSdk 24
         targetSdk 34
-        versionCode 12
-        versionName "7.0.2"
+        versionCode 14
+        versionName "7.2.0"
+    }
+    signingConfigs {
+        release {
+            if (hasKeystore) {
+                storeFile file(ksPath)
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            }
+        }
     }
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+            if (hasKeystore) signingConfig signingConfigs.release
+        }
         debug { minifyEnabled false }
     }
     compileOptions {
@@ -30,7 +48,7 @@ dependencies {
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.coordinatorlayout:coordinatorlayout:1.2.0'
-    // required by MainActivity v6 + SendService (coroutines)
+    // required by MainActivity + SendService (coroutines)
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
 }

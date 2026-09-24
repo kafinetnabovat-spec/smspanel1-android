@@ -3,7 +3,7 @@
  * Plugin Name: MahdiNikzad SMS Gateway
  * Plugin URI: https://mahdinikzad.ir
  * Description: بک‌اند اپ SmsPanel — مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
- * Version: 4.1.2
+ * Version: 4.3.0
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: Mahdi Nikzad
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SMSP1_VERSION', '4.1.2');
+define('SMSP1_VERSION', '4.3.0');
 define('SMSP1_SLUG', 'mahdinikzad-sms-gateway/mahdinikzad-sms-gateway.php');
 define('SMSP1_LICENSE_ACTIVE_META', '_smsp1_license_active');
 define('SMSP1_LICENSE_EXPIRES_META', '_smsp1_license_expires');
@@ -102,6 +102,16 @@ function smsp1_activate() {
         KEY user_status (user_id, status),
         KEY campaign (campaign_id)
     ) $charset;");
+
+    dbDelta("CREATE TABLE " . smsp1_table('templates') . " (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id BIGINT UNSIGNED NOT NULL,
+        title VARCHAR(190) NOT NULL,
+        body TEXT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY user_id (user_id)
+    ) $charset;");
 }
 
 // ---------- auth ----------
@@ -155,10 +165,11 @@ add_action('rest_api_init', function () {
         },
     ]);
 
-    // Public diagnostic: shows WHICH token channel reaches PHP (values never echoed).
+    // Diagnostic: نشان می‌دهد کدام کانال توکن به PHP می‌رسد (مقدارها هیچ‌وقت چاپ نمی‌شوند).
+    // برای ادمین‌های وردپرس محدود شد — قبلاً عمومی بود و اطلاعات کانال‌های auth را لو می‌داد.
     register_rest_route($ns, '/diag', [
         'methods' => 'GET',
-        'permission_callback' => '__return_true',
+        'permission_callback' => function () { return current_user_can('manage_options'); },
         'callback' => function (WP_REST_Request $req) {
             $auth = (string) $req->get_header('Authorization');
             $x = (string) $req->get_header('X-SMSP1-Token');
@@ -196,6 +207,29 @@ add_action('rest_api_init', function () {
             if (!$name) return new WP_Error('bad', 'نام گروه لازم است', ['status' => 400]);
             $wpdb->insert(smsp1_table('groups'), ['user_id' => $uid, 'name' => $name]);
             return ['id' => (int) $wpdb->insert_id, 'name' => $name];
+        })],
+    ]);
+
+    // قالب‌های پیام (قبلاً اپ به این روت نیاز داشت ولی در پلاگین وجود نداشت)
+    register_rest_route($ns, '/templates', [
+        ['methods' => 'GET', 'permission_callback' => $perm, 'callback' => $authed(function ($req, $uid) {
+            global $wpdb;
+            return $wpdb->get_results($wpdb->prepare("SELECT id, title, body FROM " . smsp1_table('templates') . " WHERE user_id=%d ORDER BY id DESC LIMIT 100", $uid), ARRAY_A);
+        })],
+        ['methods' => 'POST', 'permission_callback' => $perm, 'callback' => $authed(function ($req, $uid) {
+            global $wpdb;
+            $title = sanitize_text_field($req->get_param('title'));
+            $body = (string) $req->get_param('body');
+            if (!$title || $body === '') return new WP_Error('bad', 'title و body لازم است', ['status' => 400]);
+            $wpdb->insert(smsp1_table('templates'), ['user_id' => $uid, 'title' => $title, 'body' => $body]);
+            return ['id' => (int) $wpdb->insert_id, 'title' => $title];
+        })],
+        ['methods' => 'DELETE', 'permission_callback' => $perm, 'callback' => $authed(function ($req, $uid) {
+            global $wpdb;
+            $id = (int) $req->get_param('id');
+            if ($id <= 0) return new WP_Error('bad', 'id لازم است', ['status' => 400]);
+            $n = $wpdb->delete(smsp1_table('templates'), ['id' => $id, 'user_id' => $uid]);
+            return ['deleted' => (int) $n];
         })],
     ]);
 
@@ -287,6 +321,13 @@ add_action('rest_api_init', function () {
             global $wpdb;
             $limit = min(20, max(1, (int) ($req->get_param('limit') ?: 5)));
             $q = smsp1_table('queue');
+            // رفع گیر: هر پیامی که در وضعیت 'sending' جا مانده باشد (اپ یا سرویس در میانه‌ی کار
+            // کشته شده) بعد از ۵ دقیقه به 'pending' برمی‌گردد؛ وگرنه آن پیام‌ها تا ابد گم می‌شدند
+            // و شمارنده‌ی «در انتظار» هم هیچ‌وقت پایین نمی‌آمد.
+            $wpdb->query($wpdb->prepare(
+                "UPDATE $q SET status='pending' WHERE user_id=%d AND status='sending' AND updated_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE)",
+                $uid
+            ));
             $rows = $wpdb->get_results($wpdb->prepare("SELECT id, receiver, body FROM $q WHERE user_id=%d AND status='pending' ORDER BY id ASC LIMIT %d", $uid, $limit), ARRAY_A);
             if ($rows) {
                 $ids = array_map('intval', array_column($rows, 'id'));
@@ -303,8 +344,11 @@ add_action('rest_api_init', function () {
             $id = (int) $req->get_param('id');
             $st = $req->get_param('status') === 'failed' ? 'failed' : 'sent';
             $q = smsp1_table('queue');
-            $cid = (int) $wpdb->get_var($wpdb->prepare("SELECT campaign_id FROM $q WHERE id=%d AND user_id=%d", $id, $uid));
-            if (!$cid) return new WP_Error('notfound', 'پیام یافت نشد', ['status' => 404]);
+            $row = $wpdb->get_row($wpdb->prepare("SELECT campaign_id, status FROM $q WHERE id=%d AND user_id=%d", $id, $uid), ARRAY_A);
+            if (!$row) return new WP_Error('notfound', 'پیام یافت نشد', ['status' => 404]);
+            $cid = (int) $row['campaign_id'];
+            // اگر وضعیت قبلاً نهایی شده، دوباره شمارش نکن (جلوگیری از آمار اشتباه کمپین)
+            if (in_array($row['status'], ['sent', 'failed'], true)) return ['ok' => true, 'already' => $row['status']];
             $wpdb->query($wpdb->prepare("UPDATE $q SET status=%s WHERE id=%d", $st, $id));
             $c = smsp1_table('campaigns');
             if ($st === 'sent') $wpdb->query($wpdb->prepare("UPDATE $c SET sent=sent+1 WHERE id=%d", $cid));
@@ -330,41 +374,53 @@ add_action('admin_notices', function () {
     }
 });
 
-// ---------- auto-update from GitHub releases (10/10: قابل آپدیت از پنل وردپرس) ----------
-add_filter('update_plugins_mahdinikzad.ir', '__return_true'); // placeholder, main hook below
+// ---------- auto-update from GitHub releases ----------
+// نسخه از نام asset استخراج می‌شود: mahdinikzad-sms-gateway-<version>.zip
+// (قبلاً tag ریلیز خوانده می‌شد و چون تگ‌ها به شکل v7.<run_id> ساخته می‌شوند،
+//  مقایسه‌ی نسخه بی‌معنی و آپدیت اشتباه/خراب می‌شد.)
 add_filter('pre_set_site_transient_update_plugins', function ($transient) {
     if (empty($transient->checked)) return $transient;
-    $cur = SMSP1_VERSION;
+
     $remote = get_transient('smsp1_gh_version');
     if ($remote === false) {
-        $res = wp_remote_get('https://api.github.com/repos/' . SMSP1_GITHUB_REPO . '/releases/latest', [
-            'headers' => ['User-Agent' => 'mahdinikzad-sms-gateway'],
-            'timeout' => 10,
+        $res = wp_remote_get('https://api.github.com/repos/' . SMSP1_GITHUB_REPO . '/releases?per_page=20', [
+            'headers' => [
+                'User-Agent' => 'mahdinikzad-sms-gateway',
+                'Accept' => 'application/vnd.github+json',
+            ],
+            'timeout' => 12,
         ]);
+        $found = null;
         if (!is_wp_error($res) && wp_remote_retrieve_response_code($res) === 200) {
-            $j = json_decode(wp_remote_retrieve_body($res), true);
-            $tag = ltrim($j['tag_name'] ?? '', 'v');
-            // expected asset: mahdinikzad-sms-gateway.zip  OR  plugin tag like plugin-v4.0.1
-            if ($tag) {
-                set_transient('smsp1_gh_version', ['ver' => $tag, 'url' => $j['html_url'] ?? '', 'assets' => $j['assets'] ?? []], 6 * HOUR_IN_SECONDS);
-                $remote = get_transient('smsp1_gh_version');
+            $list = json_decode(wp_remote_retrieve_body($res), true);
+            foreach ((array) $list as $rel) {
+                if (!empty($rel['draft'])) continue;
+                foreach ((array) ($rel['assets'] ?? []) as $a) {
+                    $asset = (string) ($a['name'] ?? '');
+                    if (preg_match('/^mahdinikzad-sms-gateway-(\d+\.\d+\.\d+)\.zip$/i', $asset, $m)) {
+                        $found = [
+                            'ver' => $m[1],
+                            'url' => (string) ($rel['html_url'] ?? ''),
+                            'package' => (string) ($a['browser_download_url'] ?? ''),
+                        ];
+                        break 2;
+                    }
+                }
             }
         }
+        set_transient('smsp1_gh_version', $found ?: 'none', 6 * HOUR_IN_SECONDS);
+        $remote = $found ?: false;
     }
-    if (is_array($remote) && version_compare($remote['ver'], $cur, '>')) {
-        $zip = '';
-        foreach ((array) ($remote['assets'] ?? []) as $a) {
-            if (str_contains($a['name'] ?? '', 'mahdinikzad-sms-gateway')) { $zip = $a['browser_download_url']; break; }
-        }
-        if ($zip) {
-            $transient->response[SMSP1_SLUG] = (object) [
-                'slug' => 'mahdinikzad-sms-gateway',
-                'plugin' => SMSP1_SLUG,
-                'new_version' => $remote['ver'],
-                'url' => 'https://mahdinikzad.ir',
-                'package' => $zip,
-            ];
-        }
+
+    if (is_array($remote) && !empty($remote['ver']) && !empty($remote['package'])
+        && version_compare($remote['ver'], SMSP1_VERSION, '>')) {
+        $transient->response[SMSP1_SLUG] = (object) [
+            'slug' => 'mahdinikzad-sms-gateway',
+            'plugin' => SMSP1_SLUG,
+            'new_version' => $remote['ver'],
+            'url' => $remote['url'] ?: ('https://github.com/' . SMSP1_GITHUB_REPO),
+            'package' => $remote['package'],
+        ];
     }
     return $transient;
 });

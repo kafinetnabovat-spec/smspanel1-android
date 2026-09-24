@@ -33,6 +33,16 @@ add_action('admin_post_smsp1_group_add', function () {
     exit;
 });
 
+add_action('admin_post_smsp1_unstick', function () {
+    if (!current_user_can('manage_options')) wp_die('دسترسی ندارید');
+    check_admin_referer('smsp1_unstick');
+    global $wpdb;
+    $q = smsp1_table('queue');
+    $n = (int) $wpdb->query("UPDATE $q SET status='pending' WHERE status='sending' AND updated_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE)");
+    wp_safe_redirect(admin_url('admin.php?page=smsp1-panel&tab=campaigns&unstuck=' . $n));
+    exit;
+});
+
 add_action('admin_post_smsp1_group_del', function () {
     if (!current_user_can('manage_options')) wp_die('دسترسی ندارید');
     check_admin_referer('smsp1_group_del');
@@ -169,7 +179,14 @@ function smsp1_render_admin_page() {
         <?php endif; ?>
 
         <?php if ($tab === 'campaigns'): ?>
+            <?php if (isset($_GET['unstuck'])): ?><div class="notice notice-success"><p>تعداد <?php echo (int) $_GET['unstuck']; ?> پیام گیرافتاده به صف برگشت.</p></div><?php endif; ?>
             <div class="smsp1-card"><h3>کمپین‌ها و صف ارسال</h3>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-bottom:12px">
+                    <?php wp_nonce_field('smsp1_unstick'); ?>
+                    <input type="hidden" name="action" value="smsp1_unstick">
+                    <button class="button" type="submit">آزادسازی پیام‌های گیرافتاده</button>
+                    <small style="color:#888;margin-right:8px">پیام‌هایی که بیش از ۵ دقیقه در وضعیت sending مانده‌اند به صف برمی‌گردند (خودکار هم انجام می‌شود).</small>
+                </form>
                 <table class="smsp1-table"><tr><th>کمپین</th><th>متن</th><th>پیشرفت</th><th>وضعیت</th><th>تاریخ</th></tr>
                 <?php foreach ($wpdb->get_results("SELECT * FROM $mT ORDER BY id DESC LIMIT 100", ARRAY_A) as $r): $pct = $r['total'] ? round(100 * ($r['sent'] + $r['failed']) / max(1, $r['total'])) : 0; ?>
                     <tr><td><b><?php echo esc_html($r['title']); ?></b><br><small>#<?php echo (int) $r['id']; ?> کاربر #<?php echo (int) $r['user_id']; ?></small></td>

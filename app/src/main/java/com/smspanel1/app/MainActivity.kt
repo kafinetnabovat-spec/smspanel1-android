@@ -131,6 +131,20 @@ class MainActivity : AppCompatActivity() {
     lateinit var tvTopTitle: TextView
     lateinit var tvTopSub: TextView
 
+    // پرچم‌های بارگذاری — جلوی حلقه‌ی بی‌نهایت درخواست به سرور را می‌گیرند
+    var campaignsLoaded = false
+    var groupsLoaded = false
+    var contactsLoaded = false
+    var templatesLoaded = false
+
+    // تب‌ها و نوار خلاصه (برای دسترسی از داخل توابع دیگر، مثل دکمه‌ی جستجو)
+    lateinit var tabChats: LinearLayout
+    lateinit var tabContacts: LinearLayout
+    lateinit var tabSettings: LinearLayout
+    lateinit var tvSummary: TextView
+
+    var sheetBodyRef: EditText? = null   // پیش‌نویس متن پیام در شیت «ارسال جدید»
+
     var cacheGroups: JSONArray = JSONArray()
     var cacheContacts: JSONArray = JSONArray()
     var cacheCampaigns: JSONArray = JSONArray()
@@ -147,12 +161,40 @@ class MainActivity : AppCompatActivity() {
     val GRAY_100: Int = Color.parseColor("#F5F6F6")
 
     // ---- runtime permission launchers ----
-    private val requestSmsPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val requestSmsPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) toast("بدون اجازه ارسال پیامک هیچ پیامی فرستاده نمی‌شود")
+        requestNextRuntimePermission()
+    }
+    private val requestPhoneStatePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
+        requestNextRuntimePermission()
+    }
+    private val requestNotifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private val requestContactsPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) openPhoneContactPicker() else toast("اجازه دسترسی به مخاطبین داده نشد")
     }
     private val pickCsvLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) importCsv(uri)
+    }
+
+    /** درخواست زنجیره‌ای مجوزها — اندروید هم‌زمان فقط یک دیالوگ نشان می‌دهد.
+     *  READ_PHONE_STATE برای فهرست سیم‌کارت‌ها و POST_NOTIFICATIONS برای نوتیفیکیشن سرویس لازم است. */
+    private fun requestNextRuntimePermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            requestPhoneStatePermission.launch(Manifest.permission.READ_PHONE_STATE)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestNotifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun ensureRuntimePermissions() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            requestSmsPermission.launch(Manifest.permission.SEND_SMS)
+        } else {
+            requestNextRuntimePermission()
+        }
     }
 
     // ---- live status from SendService ----
@@ -175,7 +217,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         D = resources.displayMetrics.density
         prefs = getSharedPreferences("smspanel1", Context.MODE_PRIVATE)
-        requestSmsPermission.launch(Manifest.permission.SEND_SMS)
+        ensureRuntimePermissions()
         siteUrl = SITE_URL // fixed panel; ignore any old saved value
         userId = prefs.getInt("uid", 0)
         apiToken = prefs.getString("token", "") ?: ""
@@ -254,6 +296,7 @@ class MainActivity : AppCompatActivity() {
                     apiToken = obj.optString("api_token")
                     if (userId == 0 || apiToken.isEmpty()) throw Exception("پاسخ نامعتبر از سرور")
                     username = u
+                    Net.reset()
                     prefs.edit().putString("site", siteUrl).putString("username", u).putInt("uid", userId).putString("token", apiToken).apply()
                     runOnUiThread { showMain() }
                 } catch (e: Exception) {
@@ -269,6 +312,7 @@ class MainActivity : AppCompatActivity() {
     // ==================== MAIN SHELL ====================
 
     fun showMain() {
+        sheetBodyRef = null   // با برگشت به خانه، پیش‌نویس پاک می‌شود
         root.removeAllViews()
         topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -296,35 +340,40 @@ class MainActivity : AppCompatActivity() {
         root.addView(topBar)
         mainContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
             setBackgroundColor(WHITE)
         }
-        root.addView(mainContent)
+        // FAB باید روی محتوا شناور باشد؛ قبلاً به‌تنهایی زیر نوار تب‌ها می‌افتاد
+        // و ۱۳۶dp فضای خالی زیر تب‌بار می‌ساخت.
+        val contentFrame = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        contentFrame.addView(mainContent)
+        root.addView(contentFrame)
         bottomNav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(WHITE)
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-        val tabChats = makeBottomTab("💬", "پیام‌ها", true)
-        val tabContacts = makeBottomTab("👥", "مخاطبین", false)
-        val tabSettings = makeBottomTab("⚙️", "تنظیمات", false)
+        tabChats = makeBottomTab("💬", "پیام‌ها", true)
+        tabContacts = makeBottomTab("👥", "مخاطبین", false)
+        tabSettings = makeBottomTab("⚙️", "تنظیمات", false)
         tabChats.setOnClickListener { selectTab(0, tabChats, tabContacts, tabSettings) }
         tabContacts.setOnClickListener { selectTab(1, tabChats, tabContacts, tabSettings) }
         tabSettings.setOnClickListener { selectTab(2, tabChats, tabContacts, tabSettings) }
         bottomNav.addView(tabChats); bottomNav.addView(tabContacts); bottomNav.addView(tabSettings)
         root.addView(bottomNav)
-        val fabContainer = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        }
         val fab = Button(this).apply {
             text = "＋"; textSize = 28f; setTextColor(WHITE)
             background = rounded(WA_LIGHT_GREEN, 28)
-            layoutParams = FrameLayout.LayoutParams(dp(56), dp(56)).apply { gravity = Gravity.END or Gravity.BOTTOM; setMargins(0, 0, dp(16), dp(80)) }
+            layoutParams = FrameLayout.LayoutParams(dp(56), dp(56)).apply {
+                gravity = Gravity.END or Gravity.BOTTOM
+                setMargins(0, 0, dp(16), dp(16))
+            }
             stateListAnimator = null
             setOnClickListener { showNewMessageSheet() }
         }
-        fabContainer.addView(fab)
-        root.addView(fabContainer)
+        contentFrame.addView(fab)
         selectTab(0, tabChats, tabContacts, tabSettings)
         startSendService()
     }
@@ -347,29 +396,41 @@ class MainActivity : AppCompatActivity() {
             (tab.getChildAt(1) as TextView).setTypeface(null, if (isActive) Typeface.BOLD else Typeface.NORMAL)
         }
         when (index) {
-            0 -> showChatsTab()
-            1 -> showContactsTab()
+            0 -> showChatsTab(true)   // هر بار ورود به تب، از سرور تازه شود
+            1 -> showContactsTab(true)
             2 -> showSettingsTab()
         }
     }
 
     // ==================== CHATS / CAMPAIGNS TAB ====================
 
-    fun showChatsTab() {
+    fun showChatsTab(force: Boolean = false) {
+        if (force) campaignsLoaded = false
         mainContent.removeAllViews()
         tvTopTitle.text = "پیام‌ها"
         val today = JalaliCalendar.todayShamsi()
         val persianMonths = arrayOf("فروردین","اردیبهشت","خرداد","تیر","مرداد","شهریور","مهر","آبان","آذر","دی","بهمن","اسفند")
         tvTopSub.text = "${today.day} ${persianMonths[today.month-1]} ${today.year}"
+        // نوار خلاصه‌ی مستقل — قبلاً پاسخ /queue/counts روی tvTopSub می‌نوشت و
+        // پیام زنده‌ی سرویس («ارسال شد: … • ناموفق: …») را پاک می‌کرد.
+        tvSummary = lbl("در حال دریافت آمار…", 12f, false, GRAY_500).apply {
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(GRAY_100)
+        }
+        mainContent.addView(tvSummary)
         val scroll = ScrollView(this)
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        if (cacheCampaigns.length() == 0) {
+        if (cacheCampaigns.length() == 0 && !campaignsLoaded) {
+            // ⚠️ قبلاً این شرط فقط length بود: اگر کاربر هیچ کمپینی نداشت، پاسخ سرور آرایه‌ی
+            // خالی بود → showChatsTab دوباره صدا زده می‌شد → درخواست بی‌پایان به سرور و باتری‌خوری.
+            campaignsLoaded = true
             scope.launch(Dispatchers.IO) {
                 try {
                     val campaigns = JSONArray(getAuth("queue"))
                     cacheCampaigns = campaigns
                     runOnUiThread { showChatsTab() }
                 } catch (e: Exception) {
+                    campaignsLoaded = false
                     val msg = e.message ?: ""
                     runOnUiThread {
                         if (msg.contains("401")) {
@@ -428,7 +489,8 @@ class MainActivity : AppCompatActivity() {
         scope.launch(Dispatchers.IO) {
             try {
                 val counts = JSONObject(getAuth("queue/counts"))
-                runOnUiThread { tvTopSub.text = "در انتظار: ${counts.optInt("pending")} • ارسالی امروز: ${counts.optInt("sent")}" }
+                val txt = "در انتظار: ${counts.optInt("pending")} • ارسالی امروز: ${counts.optInt("sent")}"
+                runOnUiThread { if (::tvSummary.isInitialized) tvSummary.text = txt }
             } catch (_: Exception) {}
         }
     }
@@ -456,7 +518,8 @@ class MainActivity : AppCompatActivity() {
 
     // ==================== CONTACTS TAB ====================
 
-    fun showContactsTab() {
+    fun showContactsTab(force: Boolean = false) {
+        if (force) { contactsLoaded = false; groupsLoaded = false }
         mainContent.removeAllViews()
         tvTopTitle.text = "مخاطبین"
         tvTopSub.text = "همه مخاطبین"
@@ -509,9 +572,24 @@ class MainActivity : AppCompatActivity() {
                 addChip(g.getString("name"), g.getInt("id"), activeGroupFilter == g.getInt("id"))
             } catch (_: Exception) {}
         }
-        if (cacheGroups.length() == 0) {
+        // دکمه‌ی ساخت گروه — قبلاً در اپ هیچ راهی برای ساخت گروه وجود نداشت و
+        // کاربر تازه نمی‌توانست هیچ مخاطبی اضافه کند یا پیامی بفرستد.
+        val newGroupChip = TextView(this).apply {
+            text = "➕ گروه جدید"; textSize = 13f
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            background = roundedBorder(WHITE, 20, 1, WA_GREEN)
+            setTextColor(WA_GREEN_DARK)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(4), 0, dp(4), 0) }
+            isClickable = true
+            setOnClickListener { showNewGroupDialog() }
+        }
+        chipContainer.addView(newGroupChip)
+        if (cacheGroups.length() == 0 && !groupsLoaded) {
+            // ⚠️ اینجا هم شرط فقط length بود → برای کاربر بدون گروه، حلقه‌ی بی‌نهایت درخواست.
+            groupsLoaded = true
             scope.launch(Dispatchers.IO) {
-                try { cacheGroups = JSONArray(getAuth("groups")); runOnUiThread { showContactsTab() } } catch (_: Exception) {}
+                try { cacheGroups = JSONArray(getAuth("groups")); runOnUiThread { showContactsTab() } }
+                catch (_: Exception) { groupsLoaded = false }
             }
         }
         chipScroll.addView(chipContainer)
@@ -546,9 +624,11 @@ class MainActivity : AppCompatActivity() {
             }
             if (count == 0) list.addView(lbl("مخاطبی یافت نشد", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
         }
-        if (cacheContacts.length() == 0) {
+        if (cacheContacts.length() == 0 && !contactsLoaded) {
+            contactsLoaded = true
             scope.launch(Dispatchers.IO) {
-                try { cacheContacts = JSONArray(getAuth("contacts")); runOnUiThread { renderContacts() } } catch (_: Exception) {}
+                try { cacheContacts = JSONArray(getAuth("contacts")); runOnUiThread { showContactsTab() } }
+                catch (_: Exception) { contactsLoaded = false }
             }
         } else renderContacts()
         search.addTextChangedListener(object : TextWatcher {
@@ -652,12 +732,49 @@ class MainActivity : AppCompatActivity() {
                 cacheContacts = JSONArray() // اجبار به رفرش
                 runOnUiThread {
                     toast("افزوده شد: ${obj.optInt("inserted")} • تکراری/نامعتبر: ${obj.optInt("skipped")}")
-                    showContactsTab()
+                    showContactsTab(true)
                 }
             } catch (e: Exception) {
                 runOnUiThread { toast("خطا: ${e.message?.take(100)}") }
             }
         }
+    }
+
+    // ---- ساخت گروه جدید ----
+    fun showNewGroupDialog() {
+        val et = EditText(this).apply {
+            hint = "مثلاً: مشتریان"
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(0))
+            addView(et)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("گروه جدید")
+            .setView(box)
+            .setPositiveButton("ساخت") { _, _ ->
+                val name = et.text.toString().trim()
+                if (name.isEmpty()) { toast("نام گروه را بنویس"); return@setPositiveButton }
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val res = postJson(getAuthUrl("groups"), JSONObject().put("name", name))
+                        val newId = JSONObject(res).optInt("id", -1)
+                        cacheGroups = JSONArray(getAuth("groups"))
+                        groupsLoaded = true
+                        runOnUiThread {
+                            if (newId > 0) activeGroupFilter = newId
+                            toast("گروه «$name» ساخته شد")
+                            showContactsTab()
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread { toast("خطا: ${e.message?.take(90)}") }
+                    }
+                }
+            }
+            .setNegativeButton("انصراف", null)
+            .show()
     }
 
     // ==================== SETTINGS TAB ====================
@@ -668,6 +785,10 @@ class MainActivity : AppCompatActivity() {
         tvTopSub.text = "فاصله ارسال و سیم‌کارت"
         val scroll = ScrollView(this)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)) }
+
+        // نسخه‌ی نصب‌شده را نشان بده تا معلوم شود کدام بیلد روی گوشی است
+        val appVer = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (_: Exception) { "?" }
+        col.addView(lbl("نسخه‌ی اپ: $appVer", 11f, false, GRAY_500).apply { setPadding(0, 0, 0, dp(12)) })
 
         col.addView(lbl("فاصله بین پیامک‌ها (ثانیه)", 14f, true))
         col.addView(lbl("یک بازه بده تا فاصله تصادفی باشد و اپراتور الگوی ارسال را شناسایی نکند.", 12f, false, GRAY_500).apply { setPadding(0, dp(4), 0, dp(12)) })
@@ -733,6 +854,12 @@ class MainActivity : AppCompatActivity() {
     // ==================== NEW MESSAGE ====================
 
     fun showNewMessageSheet() {
+        // ⚠️ قبلاً این تابع از cacheGroups استفاده می‌کرد ولی هیچ‌جا گروه‌ها را بارگذاری
+        // نمی‌کرد؛ روی اولین ورود لیست خالی بود و دکمه‌ی ارسال فقط می‌گفت «یک گروه انتخاب کن».
+        val needGroups = cacheGroups.length() == 0 && !groupsLoaded
+        if (needGroups) groupsLoaded = true
+        val needTemplates = cacheTemplates.length() == 0 && !templatesLoaded
+        if (needTemplates) templatesLoaded = true
         mainContent.removeAllViews()
         tvTopTitle.text = "ارسال جدید"
         tvTopSub.text = "انتخاب گروه و نوشتن پیام"
@@ -755,6 +882,12 @@ class MainActivity : AppCompatActivity() {
                 groupChipContainer.addView(check)
             } catch (_: Exception) {}
         }
+        if (cacheGroups.length() == 0) {
+            groupChipContainer.addView(
+                lbl("هنوز گروهی نداری — از تب «مخاطبین» با دکمه‌ی «➕ گروه جدید» بساز و مخاطب اضافه کن.", 12f, false, GRAY_500)
+                    .apply { setPadding(0, dp(6), 0, dp(6)) }
+            )
+        }
         col.addView(groupChipContainer)
         col.addView(lbl("۲. قالب (اختیاری):", 14f, true))
         val tplSpinner = Spinner(this)
@@ -774,6 +907,9 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(12), dp(12), dp(12), dp(12))
             minLines = 4
         }
+        val draft = sheetBodyRef?.text?.toString() ?: ""
+        if (draft.isNotEmpty()) etBody.setText(draft)
+        sheetBodyRef = etBody
         col.addView(etBody)
         tplSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
@@ -783,6 +919,44 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
+        // ذخیره‌ی متن فعلی به‌عنوان قالب (روت /templates در پلاگین v4.3 اضافه شد)
+        val btnSaveTpl = Button(this).apply {
+            text = "💾 ذخیره‌ی این متن به‌عنوان قالب"; textSize = 12f
+            setTextColor(WA_GREEN_DARK)
+            background = roundedBorder(WHITE, 12, 1, GRAY_200)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(8), 0, 0) }
+        }
+        btnSaveTpl.setOnClickListener {
+            if (tplItems.size <= 1) { toast("هنوز قالبی نداری — اول متن را بنویس و ذخیره کن") }
+            val bodyText = etBody.text.toString().trim()
+            if (bodyText.isEmpty()) { toast("اول متن پیام را بنویس"); return@setOnClickListener }
+            val etTitle = EditText(this).apply {
+                hint = "نام قالب"
+                setText(bodyText.take(20))
+                setPadding(dp(16), dp(12), dp(16), dp(12))
+            }
+            AlertDialog.Builder(this)
+                .setTitle("ذخیره‌ی قالب")
+                .setView(etTitle)
+                .setPositiveButton("ذخیره") { _, _ ->
+                    val t = etTitle.text.toString().trim()
+                    if (t.isEmpty()) { toast("نام قالب را بنویس"); return@setPositiveButton }
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            postJson(getAuthUrl("templates"), JSONObject().put("title", t).put("body", bodyText))
+                            cacheTemplates = JSONArray(getAuth("templates"))
+                            templatesLoaded = true
+                            runOnUiThread { toast("قالب «$t» ذخیره شد"); showNewMessageSheet() }
+                        } catch (e: Exception) {
+                            runOnUiThread { toast("خطا: ${e.message?.take(90)}") }
+                        }
+                    }
+                }
+                .setNegativeButton("انصراف", null)
+                .show()
+        }
+        col.addView(btnSaveTpl)
+
         val tvResult = lbl("", 13f, true, WA_GREEN_DARK).apply { setPadding(0, dp(16), 0, 0) }
         val btnSend = Button(this).apply {
             text = "📤 ارسال"; setTextColor(WHITE); background = rounded(WA_LIGHT_GREEN, 24)
@@ -792,23 +966,38 @@ class MainActivity : AppCompatActivity() {
             if (selectedGroups.isEmpty()) { tvResult.text = "یک گروه انتخاب کن"; tvResult.setTextColor(Color.RED); return@setOnClickListener }
             if (etBody.text.toString().trim().isEmpty()) { tvResult.text = "متن را بنویس"; tvResult.setTextColor(Color.RED); return@setOnClickListener }
             tvResult.text = "در حال ساخت صف..."; tvResult.setTextColor(GRAY_500)
+            btnSend.isEnabled = false
             scope.launch(Dispatchers.IO) {
                 try {
-                    val firstGroupId = selectedGroups.iterator().next()
-                    val res = postJson(getAuthUrl("build-queue"), JSONObject()
-                        .put("group_id", firstGroupId)
-                        .put("manual_body", etBody.text.toString()))
-                    val obj = JSONObject(res)
-                    val queued = obj.optInt("queued", 0)
+                    // ⚠️ قبلاً فقط «اولین» گروه از HashSet ارسال می‌شد و بقیه‌ی
+                    // گروه‌های تیک‌خورده بی‌صدا نادیده گرفته می‌شدند.
+                    val bodyText = etBody.text.toString()
+                    var queued = 0
+                    var lastError: Exception? = null
+                    for (gid in selectedGroups) {
+                        try {
+                            val res = postJson(getAuthUrl("build-queue"), JSONObject()
+                                .put("group_id", gid)
+                                .put("manual_body", bodyText))
+                            queued += JSONObject(res).optInt("queued", 0)
+                        } catch (e: Exception) { lastError = e }
+                    }
+                    if (queued == 0 && lastError != null) throw lastError
                     runOnUiThread {
                         val nowStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
                         tvResult.text = "✅ $queued پیام در صف - ${JalaliCalendar.parseAndConvert(nowStr)}"
                         tvResult.setTextColor(WA_GREEN_DARK)
                         cacheCampaigns = JSONArray()
+                        campaignsLoaded = false
+                        btnSend.isEnabled = true
                         startSendService()
                     }
                 } catch (e: Exception) {
-                    runOnUiThread { tvResult.text = "خطا: ${e.message?.take(100)}"; tvResult.setTextColor(Color.RED) }
+                    runOnUiThread {
+                        tvResult.text = "خطا: ${e.message?.take(100)}"
+                        tvResult.setTextColor(Color.RED)
+                        btnSend.isEnabled = true
+                    }
                 }
             }
         }
@@ -817,62 +1006,35 @@ class MainActivity : AppCompatActivity() {
         col.addView(tvResult); col.addView(btnSend); col.addView(btnBack)
         scroll.addView(col)
         mainContent.addView(scroll)
+        if (needGroups) {
+            scope.launch(Dispatchers.IO) {
+                var ok = false
+                try { cacheGroups = JSONArray(getAuth("groups")); ok = true } catch (_: Exception) { ok = false }
+                if (ok) runOnUiThread { showNewMessageSheet() }
+                else runOnUiThread { groupsLoaded = false }
+            }
+        }
+        if (needTemplates) {
+            scope.launch(Dispatchers.IO) {
+                var ok = false
+                try { cacheTemplates = JSONArray(getAuth("templates")); ok = true } catch (_: Exception) { ok = false }
+                if (ok) runOnUiThread { showNewMessageSheet() }
+                else runOnUiThread { templatesLoaded = false }
+            }
+        }
     }
 
-    // ==================== NETWORK (Bearer + X-SMSP1-Token fallback; some hosts strip Authorization) ====================
+    // ==================== NETWORK ====================
+    // همه‌ی درخواست‌ها از Net (فایل Net.kt) عبور می‌کنند: توکن فقط در هدر می‌رود و
+    // تنها اگر هاست هدرها را حذف کرده باشد، بعد از یک خطای 401 خودکار به query سوییچ می‌شود.
 
     fun getAuthUrl(path: String): String = "$siteUrl/wp-json/smsp1/v1/$path"
 
-    fun postJson(urlStr: String, payload: JSONObject): String {
-        // belt-and-braces: token also in body (hosts stripping headers still work)
-        if (apiToken.isNotEmpty() && !payload.has("api_token")) payload.put("api_token", apiToken)
-        val c = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"; doOutput = true
-            connectTimeout = 20000; readTimeout = 20000
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            setRequestProperty("Authorization", "Bearer $apiToken")
-            setRequestProperty("X-SMSP1-Token", apiToken)
-        }
-        try {
-            c.outputStream.write(payload.toString().toByteArray(Charsets.UTF_8))
-            val code = c.responseCode
-            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) throw Exception("سرور $code: $text")
-            return text
-        } finally { c.disconnect() }
-    }
+    fun postJson(urlStr: String, payload: JSONObject): String = Net.call(urlStr, apiToken, "POST", payload)
 
-    // فراخوانی لاگین که هنوز توکن نداریم؛ به‌همین‌خاطر تابع جدا (بدون هدر Authorization)
-    fun postJsonNoAuth(urlStr: String, payload: JSONObject): String {
-        val c = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"; doOutput = true
-            connectTimeout = 20000; readTimeout = 20000
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-        }
-        try {
-            c.outputStream.write(payload.toString().toByteArray(Charsets.UTF_8))
-            val code = c.responseCode
-            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) throw Exception("سرور $code: $text")
-            return text
-        } finally { c.disconnect() }
-    }
+    fun postJsonNoAuth(urlStr: String, payload: JSONObject): String = Net.postNoAuth(urlStr, payload)
 
-    fun getAuth(path: String): String {
-        // belt-and-braces: token also in query (hosts stripping headers still work; HTTPS protects transit)
-        val url = getAuthUrl(path) + "?api_token=" + URLEncoder.encode(apiToken, "UTF-8")
-        val c = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20000; readTimeout = 20000
-            setRequestProperty("Authorization", "Bearer $apiToken")
-            setRequestProperty("X-SMSP1-Token", apiToken)
-        }
-        try {
-            val code = c.responseCode
-            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) throw Exception("سرور $code: $text")
-            return text
-        } finally { c.disconnect() }
-    }
+    fun getAuth(path: String): String = Net.call(getAuthUrl(path), apiToken, "GET", null)
 
     // ==================== SEND SERVICE CONTROL ====================
 
@@ -887,7 +1049,10 @@ class MainActivity : AppCompatActivity() {
 
     // ==================== MISC ====================
 
-    fun showSearchDialog() { toast("جستجو در تب مخاطبین") }
+    fun showSearchDialog() {
+        selectTab(1, tabChats, tabContacts, tabSettings)
+        toast("مخاطبین را جستجو کن")
+    }
 
     fun showMoreMenu() {
         val options = arrayOf("تنظیمات", "توقف ارسال", "خروج")
@@ -895,7 +1060,7 @@ class MainActivity : AppCompatActivity() {
             when (which) {
                 0 -> showSettingsTab()
                 1 -> { stopSendService(); toast("ارسال متوقف شد") }
-                2 -> { stopSendService(); prefs.edit().clear().apply(); showLogin() }
+                2 -> { stopSendService(); Net.reset(); prefs.edit().clear().apply(); showLogin() }
             }
         }).show()
     }
