@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="smsp1_green_dark">#075E54</color>
+    <color name="smsp1_green">#128C7E</color>
+    <color name="smsp1_green_light">#25D366</color>
+    <color name="smsp1_orange">#F39C12</color>
+    <color name="smsp1_bg">#F0F2F5</color>
+    <color name="smsp1_text">#111B21</color>
+    <color name="smsp1_text_secondary">#667781</color>
+</resources>
