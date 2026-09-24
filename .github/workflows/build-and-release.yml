@@ -61,16 +61,10 @@ jobs:
         with:
           path: dist
       - name: Create GitHub Release (APK + plugin)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="v7.${{ github.run_id }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG exists, skipping create"
-          else
-            gh release create "$TAG" \
-              dist/smspanel-debug-apk/smspanel1-debug.apk \
-              dist/mahdinikzad-sms-gateway-plugin/mahdinikzad-sms-gateway.zip \
-              --title "SmsPanel1 $TAG" \
-              --generate-notes
-          fi
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v7.${{ github.run_id }}
+          generate_release_notes: true
+          files: |
+            dist/smspanel-debug-apk/smspanel1-debug.apk
+            dist/mahdinikzad-sms-gateway-plugin/mahdinikzad-sms-gateway.zip
