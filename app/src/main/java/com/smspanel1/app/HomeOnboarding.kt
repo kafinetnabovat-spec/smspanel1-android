@@ -81,7 +81,7 @@ fun MainActivity.showHomeTab() {
         setPadding(dp(16), dp(20), dp(16), dp(20))
         elevation = dp(6).toFloat()
         isClickable = true
-        setOnClickListener { showNewMessageSheet() }
+        setOnClickListener { showSendWizard() }
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(0, dp(12), 0, 0) }
@@ -128,7 +128,7 @@ fun MainActivity.showHomeTab() {
     val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     toolsGridRef = grid
     val tools = listOf(
-        HomeTool("✉️", "پیام جدید", "گروه را انتخاب کن و بفرست") { it.showNewMessageSheet() },
+        HomeTool("✉️", "پیام جدید", "گروه را انتخاب کن و بفرست") { it.showSendWizard() },
         HomeTool("➕", "افزودن مخاطب", "شماره‌ی جدید") { it.showAddContactDialog() },
         HomeTool("📋", "پیست گروهی", "چند شماره را یک‌جا بچسبان") { it.showBulkPasteDialog() },
         HomeTool("👥", "مخاطبین", "فهرست، جست‌وجو، حذف") { it.selectTab(2) },

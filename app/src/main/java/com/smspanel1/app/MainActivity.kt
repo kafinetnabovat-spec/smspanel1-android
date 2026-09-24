@@ -458,7 +458,7 @@ class MainActivity : AppCompatActivity() {
                 setMargins(0, 0, dp(16), dp(16))
             }
             stateListAnimator = null
-            setOnClickListener { showNewMessageSheet() }
+            setOnClickListener { showSendWizard() }
         }
         contentFrame.addView(fab)
         fabSend = fab
@@ -1528,6 +1528,17 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             setOnClickListener { openSite() }
         })
+        col.addView(Button(this).apply {
+            text = "🔄 ویزارد «اولین ورود» را دوباره نشان بده"
+            setTextColor(GRAY_500); textSize = 13f
+            background = roundedBorder(WHITE, 14, 1, GRAY_200)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(10), 0, 0) }
+            setOnClickListener {
+                prefs.edit().remove("onboard_seen").apply()
+                toast("آماده شد — صفحه‌ی خوش‌آمد می‌آید ✨")
+                root.postDelayed({ showWelcomeScreen() }, 250)
+            }
+        })
         col.addView(lbl("🎯 هدف: توسعه و چابکی کسب‌وکار شما · ساخته‌ی مهدی نیکزاد", 11f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(0, dp(18), 0, 0) })
 
         scroll.addView(col)
@@ -1863,7 +1874,7 @@ class MainActivity : AppCompatActivity() {
 
     // ==================== SEND SERVICE CONTROL ====================
 
-    private fun startSendService() {
+    fun startSendService() {
         val intent = Intent(this, SendService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
     }
