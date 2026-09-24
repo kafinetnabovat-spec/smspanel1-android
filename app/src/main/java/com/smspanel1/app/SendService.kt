@@ -148,7 +148,7 @@ class SendService : Service() {
         } catch (_: Exception) { false }
     }
 
-    // ---------------- network (token sent ONLY via Authorization header) ----------------
+    // ---------------- network (Bearer + X-SMSP1-Token fallback; some hosts strip Authorization) ----------------
 
     data class Msg(val id: Int, val to: String, val body: String)
 
@@ -160,6 +160,7 @@ class SendService : Service() {
             connectTimeout = 20000; readTimeout = 20000
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Authorization", "Bearer $apiToken")
+            setRequestProperty("X-SMSP1-Token", apiToken)
         }
         try {
             c.outputStream.write(payload.toString().toByteArray(Charsets.UTF_8))
