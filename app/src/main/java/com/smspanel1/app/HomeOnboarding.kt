@@ -86,6 +86,7 @@ fun MainActivity.showHomeTab() {
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(0, dp(12), 0, 0) }
     }
+    tourTargets["send_home"] = bigBtn
     bigBtn.addView(lbl("✉️", 30f, false, WHITE).apply { gravity = Gravity.CENTER })
     bigBtn.addView(lbl("پیام جدید بفرست", 21f, true, WHITE).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
     bigBtn.addView(lbl("فقط ۳ ضربه — بقیه‌اش با من", 12f, false, pc("#FFF6E6")).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0) })
@@ -339,8 +340,8 @@ fun MainActivity.startAppTour() {
             "برای پیدا کردن یک مشتری یا شماره، همین ذره‌بین بالای صفحه کافی است."),
         TourStep("tools", "🧰", "ابزارهای من",
             "همه‌ی کارها این‌جاست: پیام جدید، افزودن مخاطب، پستی گروهی، گروه‌ها، تنظیمات و آموزش. هیچ‌وقت لازم نیست دنبال چیزی بگردی."),
-        TourStep("fab", "✉️", "دکمه‌ی ارسال سریع",
-            "هر جای اپ بودی، این دکمه را بزن: گروه را انتخاب کن، متن را بنویس، بفرست. فقط ۳ ضربه."),
+        TourStep("send_home", "✉️", "ارسال در ۳ ضربه",
+            "همین دکمه را بزن: گروه را انتخاب کن، متن را بنویس، بفرست. در تب «پیام‌ها» هم نوار «ارسال پیام تازه» همین کار را می‌کند."),
         TourStep("tab_chats", "💬", "پیام‌ها و نتیجه‌ها",
             "اینجا می‌بینی چند پیام رفت، چند نفر ماندند و نتیجه‌ی هر کمپین چه شد."),
         TourStep("tab_contacts", "👥", "مخاطبین و گروه‌ها",

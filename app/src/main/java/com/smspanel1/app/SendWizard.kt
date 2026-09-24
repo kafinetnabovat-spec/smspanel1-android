@@ -43,14 +43,15 @@ private val SMS_PRESETS = listOf(
         "سلام {نام} عزیز 🙏\nبه اطلاع می‌رسانیم که به‌خاطر تعطیلات، خدمات ما موقتاً متوقف است.\nزمان دقیق بازگشت را اطلاع می‌دهیم.")
 )
 
-fun MainActivity.showSendWizard() {
+fun MainActivity.showSendWizard(preselected: Set<Int> = emptySet()) {
     if (onboardingOverlay != null) return
-    SendWizard(this).start()
+    SendWizard(this, preselected).start()
 }
 
-private class SendWizard(private val act: MainActivity) {
+private class SendWizard(private val act: MainActivity, initial: Set<Int> = emptySet()) {
 
-    private val selected = LinkedHashSet<Int>()          // گروه‌های انتخاب‌شده
+    private val selected = LinkedHashSet<Int>(initial)    // گروه‌های انتخاب‌شده
+    private var query = ""                                // جست‌وجوی گروه‌ها
     private var step = 0                                  // ۰،۱،۲ = مراحل ، ۳ = صفحه‌ی انجام شد
     private var bodyText = ""
     private var queuedCount = -1
@@ -154,109 +155,153 @@ private class SendWizard(private val act: MainActivity) {
     }
 
     // ==================== مرحله ۱: برای کی؟ ====================
+    // بازطراحی v8.5.0: به‌جای فهرست کارت‌های بزرگ → «چیپ‌های انتخاب‌شده + جست‌وجو + فهرست فشرده»
+    // تا با ۵ گروه تمیز بماند و با ۵۰ گروه هم قابل استفاده باشد.
+
     private fun renderGroups() {
         titleTv.text = "برای چه کسانی بفرستم؟"
         dotsTv.text = "💰 ضربه‌ی ۱ از ۳  •  انتخاب مخاطبین"
+
         val scroll = ScrollView(act)
         val col = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(act.dp(14), act.dp(16), act.dp(14), act.dp(20))
+            setPadding(act.dp(14), act.dp(14), act.dp(14), act.dp(20))
         }
         col.addView(qTitle("برای چه کسانی بفرستم؟"))
-        col.addView(qHint("یک یا چند گروه را انتخاب کن — با یک ضربه"))
+        col.addView(qHint("با یک ضربه انتخاب کن — چند گروه هم می‌شود"))
 
         if (act.cacheGroups.length() == 0) {
-            col.addView(emptyGroupsCard())
-        } else {
-            for (i in 0 until act.cacheGroups.length()) {
-                try {
-                    val g = act.cacheGroups.getJSONObject(i)
-                    col.addView(groupCard(g.getInt("id"), g.getString("name")))
-                } catch (_: Exception) {}
+            col.addView(act.uiEmptyState("🗂", "هنوز گروهی نساخته‌ای",
+                "گروه = دسته‌ی مشتری‌ها (مثلاً «مشتریان تهران»). مخاطبین را از گوشی یا فایل اکسل داخلش می‌ریزی.",
+                "➕  ساختن گروه جدید") {
+                act.popOverlay(); act.showNewGroupDialog()
+            })
+            scroll.addView(col)
+            bodyBox.removeAllViews(); bodyBox.addView(scroll)
+            setFooter("ادامه  ➜", enabled = false) { }
+            return
+        }
+
+        // ---------- چیپ‌های انتخاب‌شده (همیشه در دید) ----------
+        if (selected.isNotEmpty()) {
+            val strip = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+            selected.forEach { gid ->
+                strip.addView(act.uiChip("${nameOf(gid)}  ✕", on = true, weight = null) {
+                    selected.remove(gid); render()
+                })
             }
-            col.addView(TextView(act).apply {
-                text = "➕  گروه جدید بساز"
-                textSize = 15f; setTextColor(act.WA_GREEN_DARK); setTypeface(null, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                background = act.roundedBorder(act.WHITE, 18, 1, pcc("#D8E3E7"))
-                setPadding(act.dp(14), act.dp(16), act.dp(14), act.dp(16))
-                isClickable = true
-                setOnClickListener {
-                    act.popOverlay()
-                    act.showNewGroupDialog()
-                }
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { setMargins(0, act.dp(4), 0, 0) }
+            col.addView(android.widget.HorizontalScrollView(act).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(strip)
             })
         }
+
+        // ---------- جست‌وجو (فقط وقتی گروه‌ها زیاد شده‌اند) ----------
+        if (act.cacheGroups.length() > 4) {
+            col.addView(act.uiSearchField("🔍  جست‌وجوی گروه…") { q ->
+                query = q; render()
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, act.dp(6), 0, act.dp(10)) }
+            })
+        }
+
+        // ---------- اقدام‌های سریع ----------
+        val quick = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+        quick.addView(act.uiChip("✅ همه", weight = null) {
+            filteredIds().forEach { selected.add(it) }; render()
+        })
+        if (selected.isNotEmpty()) quick.addView(act.uiChip("✖ هیچ‌کدام", weight = null) {
+            selected.clear(); render()
+        })
+        quick.addView(act.uiChip("➕ گروه جدید", weight = null) {
+            act.popOverlay(); act.showNewGroupDialog()
+        })
+        col.addView(quick)
+
+        // ---------- فهرست فشرده‌ی گروه‌ها ----------
+        val ids = filteredIds()
+        if (ids.isEmpty()) {
+            col.addView(act.uiEmptyState("🔍", "گروهی با این نام پیدا نشد",
+                "املای دیگری امتحان کن یا گروه جدید بساز.", "➕  گروه جدید") {
+                act.popOverlay(); act.showNewGroupDialog()
+            })
+        } else {
+            ids.forEach { gid -> col.addView(groupRow(gid)) }
+        }
+
         scroll.addView(col)
         bodyBox.removeAllViews(); bodyBox.addView(scroll)
-        setFooter(if (selected.isEmpty()) "یک گروه انتخاب کن" else "ادامه  ➜", enabled = selected.isNotEmpty()) {
-            step = 1; render()
-        }
+        val label = if (selected.isEmpty()) "یک گروه انتخاب کن" else "ادامه ($selected.size گروه)  ➜"
+        setFooter(label, enabled = selected.isNotEmpty()) { step = 1; render() }
     }
 
-    private fun groupCard(id: Int, name: String): View {
-        val on = selected.contains(id)
-        val card = LinearLayout(act).apply {
+    /** ردیف فشرده‌ی گروه: یک خط، ارتفاع کم، ولی ناحیه‌ی لمس بزرگ */
+    private fun groupRow(gid: Int): View {
+        val on = selected.contains(gid)
+        return LinearLayout(act).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = if (on) act.roundedBorder(pcc("#FFF6E6"), 18, 2, act.ORANGE)
-                         else act.roundedBorder(act.WHITE, 18, 1, pcc("#E6ECEF"))
-            setPadding(act.dp(14), act.dp(16), act.dp(14), act.dp(16))
+            minimumHeight = act.dp(56)
+            background = if (on) act.roundedBorder(hex("#FFF6E6"), Tok.R_CARD, 2, Tok.ORANGE)
+                         else act.roundedBorder(act.WHITE, Tok.R_CARD, 1, Tok.LINE)
+            setPadding(act.dp(14), act.dp(12), act.dp(14), act.dp(12))
             isClickable = true
             setOnClickListener {
-                if (on) selected.remove(id) else selected.add(id)
+                if (on) selected.remove(gid) else selected.add(gid)
                 render()
             }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, 0, 0, act.dp(9)) }
+            ).apply { setMargins(0, 0, 0, act.dp(8)) }
+            addView(TextView(act).apply {
+                text = if (on) "✓" else "➕"
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(if (on) act.WHITE else Tok.MUTED)
+                gravity = Gravity.CENTER
+                background = if (on) act.rounded(Tok.ORANGE, 12)
+                             else act.roundedBorder(act.WHITE, 12, 1, Tok.LINE)
+                layoutParams = LinearLayout.LayoutParams(act.dp(30), act.dp(30))
+            })
+            addView(TextView(act).apply {
+                text = nameOf(gid)
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Tok.INK)
+                setPadding(act.dp(12), 0, 0, 0)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
         }
-        card.addView(TextView(act).apply { text = "👥"; textSize = 22f; setPadding(0, 0, act.dp(12), 0) })
-        card.addView(TextView(act).apply {
-            text = name; textSize = 17f; setTypeface(null, Typeface.BOLD); setTextColor(act.BLACK)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        card.addView(TextView(act).apply {
-            text = if (on) "✓" else "○"
-            textSize = 20f; setTypeface(null, Typeface.BOLD)
-            setTextColor(if (on) act.ORANGE else pcc("#C3CDD2"))
-        })
-        return card
     }
 
-    private fun emptyGroupsCard(): View {
-        val card = LinearLayout(act).apply {
-            orientation = LinearLayout.VERTICAL
-            background = act.roundedBorder(act.WHITE, 18, 1, pcc("#E6ECEF"))
-            setPadding(act.dp(18), act.dp(20), act.dp(18), act.dp(20))
-            gravity = Gravity.CENTER
+    private fun nameOf(gid: Int): String {
+        for (i in 0 until act.cacheGroups.length()) {
+            try {
+                val g = act.cacheGroups.getJSONObject(i)
+                if (g.getInt("id") == gid) return g.getString("name")
+            } catch (_: Exception) {}
         }
-        card.addView(TextView(act).apply { text = "🗂"; textSize = 40f; gravity = Gravity.CENTER })
-        card.addView(TextView(act).apply {
-            text = "هنوز گروهی نساخته‌ای"
-            textSize = 17f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
-            setPadding(0, act.dp(10), 0, 0)
-        })
-        card.addView(TextView(act).apply {
-            text = "گروه = دسته‌ی مشتری‌ها (مثلاً «مشتریان تهران»).\nمخاطبین را از گوشی یا فایل اکسل داخلش می‌ریزی."
-            textSize = 12.5f; setTextColor(act.GRAY_500); gravity = Gravity.CENTER
-            setPadding(0, act.dp(8), 0, act.dp(14)); setLineSpacing(act.dp(5).toFloat(), 1f)
-        })
-        card.addView(TextView(act).apply {
-            text = "➕  ساختن گروه جدید"
-            textSize = 15f; setTextColor(act.WHITE); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
-            background = act.rounded(act.ORANGE, 18)
-            setPadding(act.dp(22), act.dp(14), act.dp(22), act.dp(14))
-            isClickable = true
-            setOnClickListener {
-                act.popOverlay()
-                act.showNewGroupDialog()
-            }
-        })
-        return card
+        return "گروه #$gid"
+    }
+
+    /** شناسه‌ی گروه‌ها — اخیراً استفاده‌شده‌ها اول */
+    private fun orderedIds(): List<Int> {
+        val recent = act.prefs.getString("recent_groups", "")
+            ?.split(",")?.mapNotNull { it.trim().toIntOrNull() } ?: emptyList()
+        val all = ArrayList<Int>()
+        for (i in 0 until act.cacheGroups.length()) {
+            try { all.add(act.cacheGroups.getJSONObject(i).getInt("id")) } catch (_: Exception) {}
+        }
+        val head = recent.filter { all.contains(it) }
+        return head + all.filter { !head.contains(it) }
+    }
+
+    private fun filteredIds(): List<Int> {
+        val q = query.trim()
+        if (q.isEmpty()) return orderedIds()
+        return orderedIds().filter { nameOf(it).contains(q, true) }
     }
 
     // ==================== مرحله ۲: چی بنویسم؟ ====================
@@ -277,7 +322,7 @@ private class SendWizard(private val act: MainActivity) {
         SMS_PRESETS.chunked(2).forEach { pair ->
             val row = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
             pair.forEach { p ->
-                row.addView(chip("${p.emoji} ${p.title}") {
+                row.addView(act.uiChip("${p.emoji} ${p.title}") {
                     bodyText = p.body
                     render()
                 })
@@ -460,6 +505,8 @@ private class SendWizard(private val act: MainActivity) {
                     nextBtn?.let { it.text = "🚀  بفرست!"; it.isEnabled = true; it.alpha = 1f }
                 } else {
                     queuedCount = queued
+                    // گروه‌های پرکاربرد دفعه‌ی بعد بالای فهرست می‌آیند
+                    act.prefs.edit().putString("recent_groups", selected.joinToString(",")).apply()
                     // صف ساخته شد → سرویس ارسال را روشن کن و کش کمپین‌ها را تازه کن
                     act.cacheCampaigns = JSONArray()
                     act.campaignsLoaded = false

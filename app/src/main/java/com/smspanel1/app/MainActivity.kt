@@ -450,19 +450,9 @@ class MainActivity : AppCompatActivity() {
         tourTargets["tab_contacts"] = tabContacts
         tourTargets["tab_settings"] = tabSettings
         root.addView(bottomNav)
-        val fab = Button(this).apply {
-            text = "＋"; textSize = 28f; setTextColor(WHITE)
-            background = rounded(WA_LIGHT_GREEN, 28)
-            layoutParams = FrameLayout.LayoutParams(dp(56), dp(56)).apply {
-                gravity = Gravity.END or Gravity.BOTTOM
-                setMargins(0, 0, dp(16), dp(16))
-            }
-            stateListAnimator = null
-            setOnClickListener { showSendWizard() }
-        }
-        contentFrame.addView(fab)
-        fabSend = fab
-        tourTargets["fab"] = fab
+        // (v8.5.0) دکمه‌ی شناور «＋» حذف شد: روی محتوا می‌افتاد و با دکمه‌ی غول خانه
+        // و نوار «ارسال پیام تازه» در تب پیام‌ها تکراری بود.
+        // قاعده‌ی سیستم طراحی: در هر صفحه فقط «یک اقدام اصلی» که همه جا در دید است.
         selectTab(0)
         startSendService()
         // ── اولین ورود: «دفتر مجازی» + آموزش تصویری (فقط یک‌بار) ──
@@ -514,6 +504,21 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setBackgroundColor(GRAY_100)
         }
+        // نوار اقدام اصلی این صفحه — بزرگ، در دید، بدون دکمه‌ی شناور روی محتوا
+        mainContent.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(WA_GREEN, WA_GREEN_DARK)
+            )
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            isClickable = true
+            setOnClickListener { showSendWizard() }
+            addView(lbl("✉️", 20f, false, WHITE).apply { setPadding(0, 0, dp(10), 0) })
+            addView(lbl("ارسال پیام تازه", 16f, true, WHITE))
+            addView(View(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
+            addView(lbl("۳ ضربه  ‹", 12.5f, false, Color.parseColor("#CFE9E4")))
+        })
         mainContent.addView(tvSummary)
         val scroll = ScrollView(this)
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -990,26 +995,37 @@ class MainActivity : AppCompatActivity() {
         tvTopSub.text = if (activeGroupFilter == -1) "همه مخاطبین" else "گروه: ${groupNameOf(activeGroupFilter)}"
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // ---- نوار ابزار ----
-        val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(6), dp(6), dp(6), 0) }
-        fun tool(icon: String, title: String, color: Int, onClick: () -> Unit) {
-            val v = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                isClickable = true
-                setPadding(dp(2), dp(8), dp(2), dp(8))
-                setOnClickListener { onClick() }
-            }
-            v.addView(lbl(icon, 20f, false, color).apply { gravity = Gravity.CENTER })
-            v.addView(lbl(title, 10f, true, color).apply { gravity = Gravity.CENTER })
-            tools.addView(v)
+        // ---- نوار ابزار (v8.5.0): یک اقدام اصلی + بقیه در شیت «⋯ ابزارها» ----
+        // قبلاً ۶ دکمه‌ی ریز با فونت ۱۰sp اینجا بود؛ هم شلوغ بود هم خواندنش سخت.
+        val tools = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(12), dp(10), dp(12), dp(4))
         }
-        tool("✍️", "شماره جدید", WA_GREEN_DARK) { showAddContactDialog() }
-        tool("📱", "از گوشی", WA_GREEN_DARK) { requestContactsThenPick() }
-        tool("📋", "پیست گروهی", WA_GREEN_DARK) { showBulkPasteDialog() }
-        tool("📄", "فایل CSV", WA_GREEN_DARK) { pickCsvLauncher.launch(arrayOf("text/*")) }
-        if (selectionMode) tool("✖️", "پایان", ORANGE) { selectionMode = false; selectedContactIds.clear(); showContactsTab() }
-        else tool("🗑", "حذف", Color.parseColor("#C0392B")) { selectionMode = true; selectedContactIds.clear(); showContactsTab() }
+        fun barBtn(text: String, primary: Boolean, onClick: () -> Unit) {
+            tools.addView(TextView(this).apply {
+                this.text = text
+                textSize = 15f
+                setTypeface(null, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                setTextColor(if (primary) WHITE else WA_GREEN_DARK)
+                background = if (primary) rounded(ORANGE, 16)
+                             else roundedBorder(WHITE, 16, 1, Color.parseColor("#E6ECEF"))
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                isClickable = true
+                setOnClickListener { onClick() }
+                layoutParams = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, if (primary) 1.7f else 1f
+                ).apply { setMargins(dp(4), 0, dp(4), 0) }
+            })
+        }
+        if (selectionMode) {
+            barBtn("✖️ پایان انتخاب", false) {
+                selectionMode = false; selectedContactIds.clear(); showContactsTab()
+            }
+        } else {
+            barBtn("➕  افزودن مخاطب", true) { showAddContactDialog() }
+            barBtn("⋯  ابزارها", false) { showContactsToolsSheet() }
+        }
         container.addView(tools)
 
         // ---- چیپ گروه‌ها ----
@@ -1543,6 +1559,24 @@ class MainActivity : AppCompatActivity() {
 
         scroll.addView(col)
         mainContent.addView(scroll)
+    }
+
+    /** ابزارهای ثانویه‌ی مخاطبین — جای ردیف دکمه‌های ریز قبلی */
+    fun showContactsToolsSheet() {
+        val items = ArrayList<Pair<String, () -> Unit>>()
+        items.add("➕  افزودن مخاطب (شماره جدید)" to { showAddContactDialog() })
+        items.add("📱  آوردن از مخاطبین گوشی" to { requestContactsThenPick() })
+        items.add("📋  پیست گروهی (چند شماره یک‌جا)" to { showBulkPasteDialog() })
+        items.add("📄  ایمپورت از فایل اکسل / CSV" to { pickCsvLauncher.launch(arrayOf("text/*")) })
+        items.add("🗂  گروه جدید" to { showNewGroupDialog() })
+        items.add("⚙️  مدیریت گروه‌ها" to { showGroupManager() })
+        if (activeGroupFilter != -1) {
+            items.add("📤  ارسال پیام به این گروه" to { showSendWizard(setOf(activeGroupFilter)) })
+        }
+        items.add("✖️  انتخاب و حذف گروهی" to {
+            selectionMode = true; selectedContactIds.clear(); showContactsTab()
+        })
+        uiSheet("ابزارهای مخاطبین", items)
     }
 
     // ==================== NEW MESSAGE ====================
