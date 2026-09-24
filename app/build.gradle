@@ -10,8 +10,8 @@ android {
         applicationId "com.smspanel1.app"
         minSdk 24
         targetSdk 34
-        versionCode 8
-        versionName "6.1.0-minimal"
+        versionCode 9
+        versionName "6.0.0"
     }
     buildTypes {
         release { minifyEnabled false }
@@ -29,4 +29,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    // required by MainActivity v6 + SendService (coroutines)
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
 }
