@@ -7,4 +7,5 @@
     <color name="smsp1_bg">#F0F2F5</color>
     <color name="smsp1_text">#111B21</color>
     <color name="smsp1_text_secondary">#667781</color>
+    <color name="ic_launcher_background">#FFFFFF</color>
 </resources>

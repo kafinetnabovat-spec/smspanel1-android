@@ -313,10 +313,12 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(24), dp(40), dp(24), dp(24))
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        val logo = TextView(this).apply {
-            text = "💬"; textSize = 64f; gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(dp(100), dp(100)).apply { gravity = Gravity.CENTER }
-            background = rounded(ORANGE, 50)
+        // لوگو: همان آیکون اپ (به‌جای ایموجی 💬 که روی گوشی‌های مختلف بد رندر می‌شد)
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.ic_login_logo)
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(104), dp(104)).apply { gravity = Gravity.CENTER }
         }
         container.addView(logo)
         container.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(16)) })
