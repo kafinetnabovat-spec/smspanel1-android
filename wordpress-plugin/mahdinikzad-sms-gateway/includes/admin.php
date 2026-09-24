@@ -58,7 +58,7 @@ add_action('admin_post_smsp1_group_del', function () {
 
 function smsp1_admin_tab() {
     $t = $_GET['tab'] ?? 'dashboard';
-    return in_array($t, ['dashboard', 'groups', 'contacts', 'campaigns', 'licenses'], true) ? $t : 'dashboard';
+    return in_array($t, ['dashboard', 'groups', 'contacts', 'campaigns', 'licenses', 'release'], true) ? $t : 'dashboard';
 }
 
 function smsp1_render_admin_page() {
@@ -105,7 +105,7 @@ function smsp1_render_admin_page() {
         <?php if (!$ssl_ok): ?><div class="smsp1-alert" style="background:#fde2e2">هشدار: SSL فعال نیست — توکن فقط روی HTTPS امن است.</div><?php endif; ?>
         <?php if (!empty($_GET['updated'])): ?><div class="notice notice-success"><p>ذخیره شد.</p></div><?php endif; ?>
         <div class="smsp1-tabs">
-            <?php foreach (['dashboard' => 'داشبورد', 'groups' => 'گروه‌ها', 'contacts' => 'مخاطبین', 'campaigns' => 'کمپین‌ها و صف', 'licenses' => 'لایسنس‌ها'] as $k => $l): ?>
+            <?php foreach (['dashboard' => 'داشبورد', 'groups' => 'گروه‌ها', 'contacts' => 'مخاطبین', 'campaigns' => 'کمپین‌ها و صف', 'licenses' => 'لایسنس‌ها', 'release' => '🚀 انتشار و به‌روزرسانی'] as $k => $l): ?>
                 <a class="<?php echo $tab === $k ? 'active' : ''; ?>" href="<?php echo esc_url(admin_url('admin.php?page=smsp1-panel&tab=' . $k)); ?>"><?php echo esc_html($l); ?></a>
             <?php endforeach; ?>
         </div>
@@ -197,6 +197,8 @@ function smsp1_render_admin_page() {
                 <?php endforeach; ?></table>
             </div>
         <?php endif; ?>
+
+        <?php if ($tab === 'release'): smsp1_render_release_tab(); endif; ?>
 
         <?php if ($tab === 'licenses'): ?>
             <?php foreach (get_users(['fields' => ['ID', 'user_login', 'display_name']]) as $u):

@@ -447,6 +447,7 @@ class MainActivity : AppCompatActivity() {
         contentFrame.addView(fab)
         selectTab(0, tabChats, tabContacts, tabSettings)
         startSendService()
+        checkForUpdate(silent = true)   // بررسی نسخه‌ی جدید در پس‌زمینه
     }
 
     fun makeBottomTab(icon: String, title: String, active: Boolean): LinearLayout {
@@ -1466,6 +1467,19 @@ class MainActivity : AppCompatActivity() {
             startSendService() // اعمال فوری تنظیمات با ری‌استارت سرویس
         }
         col.addView(btnSave)
+
+        // ---- به‌روزرسانی برنامه ----
+        col.addView(lbl("به‌روزرسانی برنامه", 14f, true).apply { setPadding(0, dp(24), 0, dp(4)) })
+        col.addView(lbl("نسخه‌ی نصب‌شده: ${currentVersionName()}", 12f, false, GRAY_500))
+        val btnUpdate = Button(this).apply {
+            text = "🔄 بررسی به‌روزرسانی"
+            setTextColor(WA_GREEN_DARK)
+            background = roundedBorder(WHITE, 14, 1, GRAY_200)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(10), 0, 0) }
+        }
+        btnUpdate.setOnClickListener { checkForUpdate(silent = false) }
+        col.addView(btnUpdate)
+
         scroll.addView(col)
         mainContent.addView(scroll)
     }
@@ -1640,6 +1654,146 @@ class MainActivity : AppCompatActivity() {
                 if (ok) runOnUiThread { showNewMessageSheet() }
                 else runOnUiThread { templatesLoaded = false }
             }
+        }
+    }
+
+    // ==================== UPDATE (به‌روزرسانی داخل برنامه) ====================
+    // جریان کار: GET /app/version → مقایسه با نسخه‌ی نصب‌شده → دانلود APK → نصب با FileProvider
+
+    fun currentVersionName(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "0"
+    } catch (_: Exception) { "0" }
+
+    private fun versionParts(v: String): List<Int> =
+        v.trim().split(".", "-", "+").mapNotNull { it.takeWhile(Char::isDigit).toIntOrNull() }
+
+    /** true اگر remote جدیدتر از local باشد */
+    private fun isNewer(remote: String, local: String): Boolean {
+        val r = versionParts(remote); val l = versionParts(local)
+        for (i in 0 until maxOf(r.size, l.size)) {
+            val a = r.getOrElse(i) { 0 }; val b = l.getOrElse(i) { 0 }
+            if (a != b) return a > b
+        }
+        return false
+    }
+
+    fun checkForUpdate(silent: Boolean = true) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val json = Net.call("$siteUrl/wp-json/smsp1/v1/app/version", "", "GET", null)
+                val o = JSONObject(json)
+                val remote = o.optString("version", "")
+                val apkUrl = o.optString("apk_url", "")
+                val force = o.optBoolean("force", false)
+                val changelog = o.optString("changelog", "")
+                val size = o.optLong("apk_size", 0)
+                if (remote.isEmpty() || apkUrl.isEmpty()) {
+                    if (!silent) runOnUiThread { toast("سرور نسخه‌ی جدیدی اعلام نکرده") }
+                    return@launch
+                }
+                val local = currentVersionName()
+                if (!isNewer(remote, local)) {
+                    if (!silent) runOnUiThread { toast("✅ آخرین نسخه نصب است ($local)") }
+                    return@launch
+                }
+                if (!force && prefs.getString("skip_update_version", "") == remote) return@launch
+                runOnUiThread { showUpdateDialog(remote, local, apkUrl, changelog, size, force) }
+            } catch (e: Exception) {
+                if (!silent) runOnUiThread { toast("خطا در بررسی به‌روزرسانی: ${e.message?.take(80)}") }
+            }
+        }
+    }
+
+    private fun showUpdateDialog(remote: String, local: String, apkUrl: String, changelog: String, size: Long, force: Boolean) {
+        val sizeTxt = if (size > 0) " (${size / 1024 / 1024} مگابایت)" else ""
+        val msg = buildString {
+            append("نسخه‌ی نصب‌شده: $local\nنسخه‌ی جدید: $remote$sizeTxt\n")
+            if (changelog.isNotBlank()) { append("\nتغییرات:\n"); append(changelog.take(900)) }
+        }
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("🔄 به‌روزرسانی موجود است")
+            .setMessage(msg)
+            .setPositiveButton("دانلود و نصب") { _, _ -> startUpdateDownload(apkUrl, remote) }
+            .setCancelable(!force)
+            .create()
+        if (!force) {
+            dlg.setButton(AlertDialog.BUTTON_NEGATIVE, "بعداً") { d, _ ->
+                prefs.edit().putString("skip_update_version", remote).apply()
+                d.dismiss()
+            }
+        }
+        dlg.setOnShowListener { applyFontDeep(dlg.window?.decorView) }
+        dlg.show()
+    }
+
+    private fun startUpdateDownload(apkUrl: String, version: String) {
+        val progress = android.app.ProgressDialog(this).apply {
+            setTitle("در حال دانلود نسخه‌ی $version")
+            setMessage("۰٪")
+            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+            max = 100; progress = 0
+            setCancelable(false)
+        }
+        progress.show()
+        scope.launch(Dispatchers.IO) {
+            var conn: java.net.HttpURLConnection? = null
+            try {
+                val dir = getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS) ?: filesDir
+                if (!dir.exists()) dir.mkdirs()
+                val out = java.io.File(dir, "smspanel-update-$version.apk")
+                if (out.exists()) out.delete()
+                // گیت‌هاب ریدایرکت می‌کند؛ followRedirects پیش‌فرض true است
+                conn = (java.net.URL(apkUrl).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 30000; readTimeout = 60000; instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "SmsPanel1-Android")
+                }
+                val total = conn.contentLengthLong
+                conn.inputStream.use { input ->
+                    out.outputStream().use { output ->
+                        val buf = ByteArray(64 * 1024)
+                        var read: Int; var done = 0L; var lastPct = -1
+                        while (input.read(buf).also { read = it } > 0) {
+                            output.write(buf, 0, read); done += read
+                            if (total > 0) {
+                                val pct = (done * 100 / total).toInt()
+                                if (pct != lastPct && pct % 2 == 0) {
+                                    lastPct = pct
+                                    runOnUiThread { progress.progress = pct; progress.setMessage("$pct٪ — ${done / 1024 / 1024} از ${total / 1024 / 1024} مگابایت") }
+                                }
+                            }
+                        }
+                    }
+                }
+                runOnUiThread {
+                    progress.dismiss()
+                    installApk(out)
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    try { progress.dismiss() } catch (_: Exception) {}
+                    toast("دانلود ناموفق: ${e.message?.take(90)}\nمی‌توانی دستی از گیت‌هاب دانلود کنی")
+                }
+            } finally {
+                try { conn?.disconnect() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun installApk(file: java.io.File) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            toast("برای نصب، اجازه‌ی «نصب از منابع ناشناس» را بده")
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            return
+        }
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val i = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(i)
+        } catch (e: Exception) {
+            toast("نصب خودکار ممکن نشد: ${e.message?.take(80)}\nفایل در پوشه‌ی Downloads برنامه ذخیره شده")
         }
     }
 

@@ -77,6 +77,8 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p dist
+          # نام asset باید الگوی smspanel1-v<version>.apk را داشته باشد؛
+          # افزونه و اپ از همین نام، نسخه و لینک دانلود را تشخیص می‌دهند.
           APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -1 || true)
           if [ -z "$APK" ]; then APK=$(ls app/build/outputs/apk/debug/*.apk | head -1); fi
           cp "$APK" "dist/smspanel1-v${{ steps.ver.outputs.app }}.apk"

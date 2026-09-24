@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- محل ذخیره‌ی APK دانلودشده برای نصب به‌روزرسانی -->
+    <external-files-path name="apk_updates" path="Download/" />
+    <files-path name="apk_internal" path="." />
+</paths>

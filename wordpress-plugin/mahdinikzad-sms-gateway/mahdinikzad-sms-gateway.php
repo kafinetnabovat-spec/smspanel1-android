@@ -3,7 +3,7 @@
  * Plugin Name: MahdiNikzad SMS Gateway
  * Plugin URI: https://mahdinikzad.ir
  * Description: بک‌اند اپ SmsPanel — مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
- * Version: 4.4.0
+ * Version: 4.5.0
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: Mahdi Nikzad
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SMSP1_VERSION', '4.4.0');
+define('SMSP1_VERSION', '4.5.0');
 define('SMSP1_SLUG', 'mahdinikzad-sms-gateway/mahdinikzad-sms-gateway.php');
 define('SMSP1_LICENSE_ACTIVE_META', '_smsp1_license_active');
 define('SMSP1_LICENSE_EXPIRES_META', '_smsp1_license_expires');
@@ -195,6 +195,26 @@ add_action('rest_api_init', function () {
     $perm = function (WP_REST_Request $req) {
         return !is_wp_error(smsp1_require_auth($req));
     };
+
+    // اطلاعات نسخه‌ی اپ: اپ این را برای «به‌روزرسانی داخل برنامه» صدا می‌زند.
+    // عمومی است (اطلاعات حساسی ندارد) و به‌صورت خودکار از آخرین ریلیز گیت‌هاب پر می‌شود.
+    register_rest_route($ns, '/app/version', [
+        'methods' => 'GET',
+        'permission_callback' => '__return_true',
+        'callback' => function () {
+            $info = smsp1_app_release_info();
+            return [
+                'version'      => (string) $info['version'],
+                'version_code' => (int) $info['version_code'],
+                'apk_url'      => (string) $info['apk_url'],
+                'apk_size'     => (int) $info['apk_size'],
+                'changelog'    => (string) $info['changelog'],
+                'force'        => (bool) $info['force'],
+                'released_at'  => (string) $info['released_at'],
+                'release_url'  => (string) $info['release_url'],
+            ];
+        },
+    ]);
 
     // تأیید هویت: اپ بعد از لاگین این را صدا می‌زند تا مطمئن شود توکن به همان کاربر تعلق دارد
     register_rest_route($ns, '/me', [
@@ -451,6 +471,7 @@ add_filter('rest_post_dispatch', function ($result, $server, $request) {
 }, 10, 3);
 
 // ---------- admin UI ----------
+require_once __DIR__ . '/includes/release.php';   // بخش انتشار و به‌روزرسانی (گیت‌هاب)
 require_once __DIR__ . '/includes/admin.php';
 
 // ---------- HTTPS notice ----------
