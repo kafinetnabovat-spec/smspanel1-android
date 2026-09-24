@@ -4,8 +4,10 @@
 package com.smspanel1.app
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
@@ -13,6 +15,7 @@ import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -84,6 +87,13 @@ class SendService : Service() {
             var idleRounds = 0
             while (isActive) {
                 try {
+                    // بدون مجوز SEND_SMS هر پیام «ناموفق» ثبت می‌شد و کل صف با شکست تخلیه می‌شد.
+                    if (ActivityCompat.checkSelfPermission(this@SendService, android.Manifest.permission.SEND_SMS)
+                        != PackageManager.PERMISSION_GRANTED) {
+                        updateNotification("اجازه‌ی ارسال پیامک داده نشده — اپ را باز کن و اجازه بده")
+                        stopSending()
+                        break
+                    }
                     val batch = fetchQueue(5)
                     if (batch.isEmpty()) {
                         idleRounds++
@@ -96,7 +106,7 @@ class SendService : Service() {
                     idleRounds = 0
                     for (m in batch) {
                         if (!isActive) break
-                        val ok = sendSms(m.to, m.body, simSlot)
+                        val ok = sendSmsAwait(m.to, m.body, simSlot)
                         if (ok) sentCount++ else failedCount++
                         updateStatus(m.id, if (ok) "sent" else "failed")
                         updateNotification("ارسال شد: $sentCount • ناموفق: $failedCount")
@@ -104,6 +114,14 @@ class SendService : Service() {
                         delay((minDelay..maxDelay).random().toLong())
                     }
                 } catch (e: Exception) {
+                    val msg = e.message ?: ""
+                    if (msg.contains("401") || msg.contains("403")) {
+                        // توکن باطل/لایسنس غیرفعال: به‌جای تلاش هر ۱۵ ثانیه تا ابد، سرویس را ببند.
+                        updateNotification("توکن یا لایسنس معتبر نیست — دوباره وارد شو")
+                        broadcastStatus()
+                        stopSending()
+                        break
+                    }
                     updateNotification("خطای اتصال، تلاش دوباره…")
                     delay(15000)
                 }
@@ -129,11 +147,9 @@ class SendService : Service() {
 
     // ---------------- SMS sending with optional SIM slot selection ----------------
 
-    private fun sendSms(to: String, body: String, subscriptionId: Int): Boolean {
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.SEND_SMS)
-            != PackageManager.PERMISSION_GRANTED) return false
+    private fun resolveSmsManager(subscriptionId: Int): SmsManager? {
         return try {
-            val sm: SmsManager = if (subscriptionId != -1 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            if (subscriptionId != -1 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
                     getSystemService(SmsManager::class.java).createForSubscriptionId(subscriptionId)
                 else
@@ -142,51 +158,61 @@ class SendService : Service() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) getSystemService(SmsManager::class.java)
                 else @Suppress("DEPRECATION") SmsManager.getDefault()
             }
-            val parts = sm.divideMessage(body)
-            sm.sendMultipartTextMessage(to, null, parts, null, null)
-            true
-        } catch (_: Exception) { false }
+        } catch (_: Exception) { null }
     }
 
-    // ---------------- network (Bearer + X-SMSP1-Token fallback; some hosts strip Authorization) ----------------
+    /**
+     * ارسال واقعی + انتظار برای نتیجه‌ی SMS_SENT.
+     * نسخه‌ی قبلی بلافاصله بعد از صدا زدن sendMultipartTextMessage مقدار true برمی‌گرداند،
+     * پس پیام‌هایی که واقعاً نمی‌رفتند (نبود شارژ/آنتن، سیم‌کارت اشتباه، رد شدن توسط اپراتور)
+     * در پنل «ارسال‌شده» ثبت می‌شدند. حالا فقط اگر رادیو RESULT_OK بدهد sent می‌شود.
+     */
+    private suspend fun sendSmsAwait(to: String, body: String, subscriptionId: Int): Boolean {
+        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.SEND_SMS)
+            != PackageManager.PERMISSION_GRANTED) return false
+        val sm = resolveSmsManager(subscriptionId) ?: return false
+        val parts = try { sm.divideMessage(body) } catch (_: Exception) { null } ?: return false
+        if (parts.isEmpty()) return false
+
+        val action = "com.smspanel1.app.SMS_SENT.${System.currentTimeMillis()}"
+        val done = CompletableDeferred<Boolean>()
+        var remaining = parts.size
+        var allOk = true
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (resultCode != android.app.Activity.RESULT_OK) allOk = false
+                remaining--
+                if (remaining <= 0) done.complete(allOk)
+            }
+        }
+        // روی اندروید ۱۴ (targetSdk 34) ثبت Receiver بدون فلگ خطا می‌دهد.
+        ContextCompat.registerReceiver(this, receiver, IntentFilter(action), ContextCompat.RECEIVER_EXPORTED)
+        return try {
+            val sentIntents = ArrayList<PendingIntent>()
+            for (i in parts.indices) {
+                sentIntents.add(
+                    PendingIntent.getBroadcast(
+                        this, i + 1000, Intent(action),
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                    )
+                )
+            }
+            sm.sendMultipartTextMessage(to, null, parts, sentIntents, null)
+            withTimeoutOrNull(45_000) { done.await() } ?: false
+        } catch (_: Exception) {
+            false
+        } finally {
+            try { unregisterReceiver(receiver) } catch (_: Exception) {}
+        }
+    }
+
+    // ---------------- network (لایه‌ی مشترک Net: هدر، با fallback خودکار به query) ----------------
 
     data class Msg(val id: Int, val to: String, val body: String)
 
     private fun authedUrl(path: String) = "$siteUrl/wp-json/smsp1/v1/$path"
 
-    private fun postJson(path: String, payload: JSONObject): String {
-        if (apiToken.isNotEmpty() && !payload.has("api_token")) payload.put("api_token", apiToken)
-        val c = (URL(authedUrl(path)).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"; doOutput = true
-            connectTimeout = 20000; readTimeout = 20000
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            setRequestProperty("Authorization", "Bearer $apiToken")
-            setRequestProperty("X-SMSP1-Token", apiToken)
-        }
-        try {
-            c.outputStream.write(payload.toString().toByteArray(Charsets.UTF_8))
-            val code = c.responseCode
-            val text = (if (code in 200..299) c.inputStream else c.errorStream)
-                ?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-            if (code !in 200..299) throw Exception("سرور $code: $text")
-            return text
-        } finally { c.disconnect() }
-    }
-
-    private fun fetchQueue(limit: Int): List<Msg> {
-        val t = postJson("queue/fetch", JSONObject().put("limit", limit))
-        val arr = JSONArray(t)
-        val result = ArrayList<Msg>()
-        for (i in 0 until arr.length()) {
-            val o = arr.getJSONObject(i)
-            result.add(Msg(o.getInt("id"), o.getString("receiver"), o.getString("body")))
-        }
-        return result
-    }
-
-    private fun updateStatus(id: Int, status: String) {
-        try { postJson("queue/update", JSONObject().put("id", id).put("status", status)) } catch (_: Exception) {}
-    }
+    private fun postJson(path: String, payload: JSONObject): String = Net.call(authedUrl(path), apiToken, "POST", payload)
 
     // ---------------- notification ----------------
 
