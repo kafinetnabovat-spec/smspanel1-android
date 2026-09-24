@@ -369,7 +369,21 @@ class MainActivity : AppCompatActivity() {
                     val campaigns = JSONArray(getAuth("queue"))
                     cacheCampaigns = campaigns
                     runOnUiThread { showChatsTab() }
-                } catch (e: Exception) { runOnUiThread { toast("خطا در دریافت لیست: ${e.message?.take(80)}") } }
+                } catch (e: Exception) {
+                    val msg = e.message ?: ""
+                    runOnUiThread {
+                        if (msg.contains("401")) {
+                            // نشست باطل شده (توکن عوض شده یا هاست هدر را حذف کرده) — برگرد به لاگین
+                            stopSendService()
+                            prefs.edit().clear().apply()
+                            userId = 0; apiToken = ""
+                            showLogin()
+                            toast("نشست منقضی شد — دوباره وارد شو")
+                        } else {
+                            toast("خطا در دریافت لیست: ${msg.take(80)}")
+                        }
+                    }
+                }
             }
             list.addView(lbl("در حال بارگذاری...", 13f, false, GRAY_500).apply { setPadding(dp(16), dp(24), dp(16), dp(16)) })
         } else {
@@ -805,7 +819,7 @@ class MainActivity : AppCompatActivity() {
         mainContent.addView(scroll)
     }
 
-    // ==================== NETWORK (token ONLY in Authorization header) ====================
+    // ==================== NETWORK (Bearer + X-SMSP1-Token fallback; some hosts strip Authorization) ====================
 
     fun getAuthUrl(path: String): String = "$siteUrl/wp-json/smsp1/v1/$path"
 
@@ -815,6 +829,7 @@ class MainActivity : AppCompatActivity() {
             connectTimeout = 20000; readTimeout = 20000
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Authorization", "Bearer $apiToken")
+            setRequestProperty("X-SMSP1-Token", apiToken)
         }
         try {
             c.outputStream.write(payload.toString().toByteArray(Charsets.UTF_8))
@@ -845,6 +860,7 @@ class MainActivity : AppCompatActivity() {
         val c = (URL(getAuthUrl(path)).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20000; readTimeout = 20000
             setRequestProperty("Authorization", "Bearer $apiToken")
+            setRequestProperty("X-SMSP1-Token", apiToken)
         }
         try {
             val code = c.responseCode
