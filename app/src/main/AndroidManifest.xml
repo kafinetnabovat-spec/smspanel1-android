@@ -11,9 +11,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:allowBackup="true"
-        android:label="SmsPanel1"
+        android:label="@string/app_name"
         android:icon="@android:drawable/sym_def_app_icon"
-        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+        android:theme="@style/Theme.SmsPanel1">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
