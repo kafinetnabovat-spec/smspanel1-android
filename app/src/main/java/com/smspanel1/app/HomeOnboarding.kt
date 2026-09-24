@@ -253,7 +253,8 @@ fun MainActivity.showWelcomeScreen() {
         adjustViewBounds = true
         layoutParams = LinearLayout.LayoutParams(dp(92), dp(92)).apply { gravity = Gravity.CENTER }
     })
-    col.addView(lbl("دفتر مجازی کسب‌وکار شما", 23f, true, WHITE).apply { gravity = Gravity.CENTER; setPadding(0, dp(16), 0, 0) })
+    col.addView(lbl("🕊️  کبوتر", 16f, true, pc("#B9E3DB")).apply { gravity = Gravity.CENTER; setPadding(0, dp(14), 0, 0) })
+    col.addView(lbl("دفتر مجازی کسب‌وکار شما", 23f, true, WHITE).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
     col.addView(lbl("همه‌ی کارهای پیامکی — ساده، سریع، داخل جیبت", 13f, false, pc("#B9E3DB"))
         .apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(18)) })
 
@@ -549,8 +550,8 @@ fun MainActivity.showAboutScreen() {
         adjustViewBounds = true
         layoutParams = LinearLayout.LayoutParams(dp(84), dp(84)).apply { gravity = Gravity.CENTER }
     })
-    col.addView(lbl("SmsPanel1", 21f, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0) })
-    col.addView(lbl("دفتر مجازی پیامکی کسب‌وکارها · نسخه‌ی ${currentVersionName()}", 12f, false, GRAY_500)
+    col.addView(lbl("🕊️  کبوتر", 22f, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0) })
+    col.addView(lbl("پیک پیام کسب‌وکارها · نسخه‌ی ${currentVersionName()}", 12f, false, GRAY_500)
         .apply { gravity = Gravity.CENTER; setPadding(0, dp(5), 0, dp(16)) })
 
     // سازنده
@@ -576,6 +577,11 @@ fun MainActivity.showAboutScreen() {
     col.addView(maker)
 
     // هدف
+    col.addView(aboutCard("🕊️", "چرا کبوتر؟",
+        "کبوترِ نامه‌بر پیام را می‌رساند و برمی‌گردد — با پاسخ." +
+        "\nدر اپ ما هم همین اتفاق می‌افتد: پیام از سیم‌کارت خودت می‌رود و پاسخ مشتری به خودت برمی‌گردد،" +
+        " نه به یک سرشماره‌ی ناشناس که هیچ‌وقت جوابی از آن نمی‌بینی."))
+
     col.addView(aboutCard("🎯", "هدف من",
         "هدفم این است که کسب‌وکارها ساده‌تر و چابک‌تر کار کنند: بدون پنل پیچیده، بدون هزینه‌ی سنگین پیامک، " +
         "و بدون وابستگی به سرویس‌هایی که دست تو را می‌بندند.\n" +

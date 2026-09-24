@@ -330,8 +330,8 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(logo)
         container.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(16)) })
-        container.addView(lbl("پنل پیامکی", 22f, true, BLACK).apply { gravity = Gravity.CENTER })
-        container.addView(lbl("ارسال با سیم‌کارت خودت", 13f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(24)) })
+        container.addView(lbl("کبوتر", 26f, true, BLACK).apply { gravity = Gravity.CENTER })
+        container.addView(lbl("🕊️ پیک پیام کسب‌وکار شما", 13.5f, false, GRAY_500).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, dp(24)) })
         val etUser = EditText(this).apply {
             hint = "نام کاربری"; setText(username)
             background = roundedBorder(GRAY_100, 12, 1, Color.parseColor("#E0E0E0"))

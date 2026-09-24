@@ -1,10 +1,10 @@
 <resources>
-    <string name="app_name">پنل پیامکی</string>
+    <string name="app_name">کبوتر</string>
     <string name="nav_messages">پیام‌ها</string>
     <string name="nav_contacts">مخاطبین</string>
     <string name="nav_settings">تنظیمات</string>
     <string name="action_new_message">ارسال جدید</string>
     <string name="action_stop">توقف ارسال</string>
-    <string name="login_title">پنل پیامکی</string>
-    <string name="login_subtitle">ارسال با سیم‌کارت خودت</string>
+    <string name="login_title">کبوتر</string>
+    <string name="login_subtitle">پیک پیام کسب‌وکار شما</string>
 </resources>

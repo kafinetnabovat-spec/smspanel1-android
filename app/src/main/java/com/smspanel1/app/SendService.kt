@@ -251,7 +251,7 @@ class SendService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("پنل پیامکی — در حال ارسال")
+            .setContentTitle("کبوتر — در حال ارسال")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setOngoing(true)
