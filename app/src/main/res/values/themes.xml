@@ -1,4 +1,12 @@
 <resources>
-    <style name="Theme.AppCompat.Light.NoActionBar" parent="Theme.Material3.Light.NoActionBar">
+    <!-- Keep legacy alias for compatibility -->
+    <style name="Theme.AppCompat.Light.NoActionBar" parent="Theme.SmsPanel1" />
+    <style name="Theme.SmsPanel1" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/smsp1_green_dark</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">@color/smsp1_orange</item>
+        <item name="colorTertiary">@color/smsp1_green_light</item>
+        <item name="android:statusBarColor">@color/smsp1_green_dark</item>
+        <item name="android:windowBackground">@color/smsp1_bg</item>
     </style>
 </resources>
