@@ -42,15 +42,21 @@ jobs:
 
       # اگر Secret کی‌استور ست شده باشد، APK ریلیزِ امضاشده ساخته می‌شود؛
       # وگرنه APK دیباگ (برای اینکه بیلد هیچ‌وقت شکست نخورد).
-      - name: Decode keystore
+      # نکته: در گیت‌هاب اکشنز نمی‌توان از secrets داخل if استفاده کرد، پس شرط را
+      # داخل همین استپ (با متغیر محیطی) بررسی می‌کنیم و نتیجه را به استپ بعد می‌دهیم.
+      - name: Prepare signing keystore
         id: ks
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
         env:
           KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-          echo "have=yes" >> "$GITHUB_OUTPUT"
-          echo "کی‌استور آماده شد"
+          if [ -n "$KS_B64" ]; then
+            printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "have=yes" >> "$GITHUB_OUTPUT"
+            echo "کی‌استور آماده شد"
+          else
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "بدون کی‌استور"
+          fi
 
       - name: Build APK
         env:
