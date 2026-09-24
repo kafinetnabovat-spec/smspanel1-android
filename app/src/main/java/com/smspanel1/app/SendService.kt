@@ -214,6 +214,21 @@ class SendService : Service() {
 
     private fun postJson(path: String, payload: JSONObject): String = Net.call(authedUrl(path), apiToken, "POST", payload)
 
+    private fun fetchQueue(limit: Int): List<Msg> {
+        val t = postJson("queue/fetch", JSONObject().put("limit", limit))
+        val arr = JSONArray(t)
+        val result = ArrayList<Msg>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            result.add(Msg(o.getInt("id"), o.getString("receiver"), o.getString("body")))
+        }
+        return result
+    }
+
+    private fun updateStatus(id: Int, status: String) {
+        try { postJson("queue/update", JSONObject().put("id", id).put("status", status)) } catch (_: Exception) {}
+    }
+
     // ---------------- notification ----------------
 
     private fun createChannel() {
