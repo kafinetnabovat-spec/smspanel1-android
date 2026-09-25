@@ -1,7 +1,7 @@
 === MahdiNikzad SMS Gateway ===
 Requires PHP: 8.0
 Requires at least: 6.0
-Version: 4.7.0
+Version: 4.8.0
 
 بک‌اند اپ SmsPanel: مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
 
@@ -20,6 +20,7 @@ Version: 4.7.0
 
 == API (namespace: smsp1/v1) ==
 POST /login              {username, password}                → {user_id, api_token}
+GET  /me                   → {user_id, license_expires, days_left, is_lifetime}
 GET  /groups              (Authorization: Bearer token)        → [{id, name}]
 POST /groups               {name}
 GET  /contacts             ?group_id=N

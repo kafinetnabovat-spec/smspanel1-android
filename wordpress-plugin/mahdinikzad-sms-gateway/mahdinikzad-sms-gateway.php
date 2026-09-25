@@ -3,7 +3,7 @@
  * Plugin Name: MahdiNikzad SMS Gateway
  * Plugin URI: https://mahdinikzad.ir
  * Description: بک‌اند اپ SmsPanel — مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
- * Version: 4.7.0
+ * Version: 4.8.0
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: Mahdi Nikzad
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SMSP1_VERSION', '4.7.0');
+define('SMSP1_VERSION', '4.8.0');
 define('SMSP1_SLUG', 'mahdinikzad-sms-gateway/mahdinikzad-sms-gateway.php');
 define('SMSP1_LICENSE_ACTIVE_META', '_smsp1_license_active');
 define('SMSP1_LICENSE_EXPIRES_META', '_smsp1_license_expires');
@@ -44,6 +44,47 @@ function smsp1_valid_mobile($m) {
 
 function smsp1_render_name($template, $name) {
     return str_replace(['{نام}', '{name}'], $name, $template);
+}
+
+// ---------- تاریخ شمسی و وضعیت اشتراک ----------
+function smsp1_to_jalali($gy, $gm, $gd) {
+    $g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    if ($gy > 1600) { $jy = 979; $gy -= 1600; } else { $jy = 0; $gy -= 621; }
+    $gy2 = ($gm > 2) ? $gy + 1 : $gy;
+    $days = (365 * $gy) + (int) (($gy2 + 3) / 4) - (int) (($gy2 + 99) / 100) + (int) (($gy2 + 399) / 400) - 80 + $gd + $g_d_m[$gm - 1];
+    $jy += 33 * (int) ($days / 12053); $days %= 12053;
+    $jy += 4 * (int) ($days / 1461); $days %= 1461;
+    if ($days > 365) { $jy += (int) (($days - 1) / 365); $days = ($days - 1) % 365; }
+    if ($days < 186) { $jm = 1 + (int) ($days / 31); $jd = 1 + ($days % 31); }
+    else { $jm = 7 + (int) (($days - 186) / 30); $jd = 1 + (($days - 186) % 30); }
+    return [$jy, $jm, $jd];
+}
+
+function smsp1_format_jalali($date_str) {
+    if (!$date_str) return '—';
+    $parts = preg_split('/[\sT]/', (string) $date_str);
+    $d = explode('-', $parts[0]);
+    if (count($d) < 3) return (string) $date_str;
+    [$jy, $jm, $jd] = smsp1_to_jalali((int) $d[0], (int) $d[1], (int) $d[2]);
+    $months = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+    return $jd . ' ' . $months[$jm - 1] . ' ' . $jy;
+}
+
+/**
+ * وضعیت اشتراک کاربر: ['active', 'expires', 'is_lifetime', 'days_left']
+ * days_left برای دائمی null است؛ صفر یعنی امروز تمام می‌شود، منفی یعنی منقضی‌شده.
+ * انقضا پایانِ روزِ تاریخِ ثبت‌شده حساب می‌شود (تا آخر آن روز فرصت دارد).
+ */
+function smsp1_license_info($uid) {
+    $uid = (int) $uid;
+    $active = get_user_meta($uid, SMSP1_LICENSE_ACTIVE_META, true) === '1';
+    $expires = trim((string) get_user_meta($uid, SMSP1_LICENSE_EXPIRES_META, true));
+    if ($expires === '') return ['active' => $active, 'expires' => '', 'is_lifetime' => true, 'days_left' => null];
+    $end = strtotime($expires . ' 23:59:59');
+    if ($end === false) return ['active' => $active, 'expires' => $expires, 'is_lifetime' => true, 'days_left' => null];
+    // روزهای باقیمانده‌ی تقویمی با احتساب امروز: انقضای امروز=۰، فردا=۱، دیروز=۱-
+    $days_left = (int) floor(($end - strtotime('today')) / 86400);
+    return ['active' => $active, 'expires' => $expires, 'is_lifetime' => false, 'days_left' => $days_left];
 }
 
 // ---------- activation ----------
@@ -258,12 +299,15 @@ add_action('rest_api_init', function () {
         'methods' => 'GET', 'permission_callback' => $perm, 'callback' => $authed(function ($req, $uid) {
             $u = get_userdata($uid);
             $exp = get_user_meta($uid, SMSP1_LICENSE_EXPIRES_META, true);
+            $lic = smsp1_license_info($uid);
             return [
                 'user_id' => (int) $uid,
                 'username' => $u ? $u->user_login : '',
                 'display_name' => $u ? $u->display_name : '',
-                'license_active' => get_user_meta($uid, SMSP1_LICENSE_ACTIVE_META, true) === '1',
-                'license_expires' => $exp ?: '',
+                'license_active' => $lic['active'],
+                'license_expires' => $lic['expires'],
+                'is_lifetime' => $lic['is_lifetime'],
+                'days_left' => $lic['days_left'],
                 'version' => SMSP1_VERSION,
             ];
         }),

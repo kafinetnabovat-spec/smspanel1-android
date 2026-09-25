@@ -123,6 +123,7 @@ class MainActivity : AppCompatActivity() {
     var scope: CoroutineScope = MainScope()
     var D: Float = 1f
     var activeGroupFilter: Int = -1
+    var licenseLabel: TextView? = null // لیبل وضعیت اشتراک در تب تنظیمات (با تازه‌سازی بی‌صدا به‌روز می‌شود)
 
     lateinit var prefs: android.content.SharedPreferences
     lateinit var root: LinearLayout
@@ -375,11 +376,22 @@ class MainActivity : AppCompatActivity() {
                     clearAllUserData()
                     cacheOwnerUid = userId
                     Net.reset()
-                    prefs.edit().putString("site", siteUrl).putString("username", u).putInt("uid", userId).putString("token", apiToken).apply()
+                    prefs.edit().putString("site", siteUrl).putString("username", u).putInt("uid", userId).putString("token", apiToken)
+                        .putString("lic_expires", me.optString("license_expires", ""))
+                        .putBoolean("lic_lifetime", me.optBoolean("is_lifetime", false))
+                        .putInt("lic_days", if (me.has("days_left") && !me.isNull("days_left")) me.optInt("days_left") else -999)
+                        .putLong("lic_ts", System.currentTimeMillis()).apply()
                     runOnUiThread { showMain() }
                 } catch (e: Exception) {
                     CrashReporter.reportNonFatal(this@MainActivity, e, screen = "Login")
-                    runOnUiThread { msg.text = "خطا: ${e.message?.take(150)}"; msg.setTextColor(Color.RED) }
+                    val raw = e.message ?: ""
+                    val friendly = when {
+                        raw.contains("expired") -> "⛔ اشتراک شما تمام شده است — برای تمدید با پشتیبانی در تماس باش"
+                        raw.contains("no_license") -> "لایسنس شما فعال نیست — با پشتیبانی در تماس باش"
+                        raw.contains("bad_login") -> "نام کاربری یا رمز اشتباه است"
+                        else -> "خطا: ${raw.take(150)}"
+                    }
+                    runOnUiThread { msg.text = friendly; msg.setTextColor(Color.RED) }
                 }
             }
         }
@@ -392,6 +404,9 @@ class MainActivity : AppCompatActivity() {
 
     fun showMain() {
         CrashReporter.currentScreenHint = "Main"
+        // وضعیت اشتراک حداکثر ساعتی یک‌بار از سرور تازه می‌شود؛ هشدار انقضا از روی کش (حداکثر روزی یک‌بار)
+        if (System.currentTimeMillis() - prefs.getLong("lic_ts", 0) > 3600_000) refreshLicenseSilently { maybeShowExpiryWarning() }
+        else maybeShowExpiryWarning()
         ensureCacheOwner()    // هیچ‌وقت داده‌ی حساب قبلی رندر نمی‌شود
         sheetBodyRef = null   // با برگشت به خانه، پیش‌نویس پاک می‌شود
         root.removeAllViews()
@@ -1453,6 +1468,17 @@ class MainActivity : AppCompatActivity() {
         val appVer = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (_: Exception) { "?" }
         col.addView(lbl("نسخه‌ی اپ: $appVer", 11f, false, GRAY_500).apply { setPadding(0, 0, 0, dp(12)) })
 
+        // ---- اشتراک ----
+        col.addView(lbl("اشتراک", 14f, true))
+        val (licText, licColor) = licenseStatusText()
+        licenseLabel = lbl(licText, 13f, true, licColor).apply {
+            background = rounded(Color.parseColor(if (licColor == Color.RED) "#FDE2E2" else "#E8F5E9"), 12)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(6), 0, dp(8)) }
+        }
+        col.addView(licenseLabel)
+        refreshLicenseSilently() // تازه‌سازی بی‌صدا؛ لیبل بالا خودکار به‌روز می‌شود
+
         col.addView(lbl("فاصله بین پیامک‌ها (ثانیه)", 14f, true))
         col.addView(lbl("یک بازه بده تا فاصله تصادفی باشد و اپراتور الگوی ارسال را شناسایی نکند.", 12f, false, GRAY_500).apply { setPadding(0, dp(4), 0, dp(12)) })
 
@@ -1758,6 +1784,63 @@ class MainActivity : AppCompatActivity() {
 
     // ==================== UPDATE (به‌روزرسانی داخل برنامه) ====================
     // جریان کار: GET /app/version → مقایسه با نسخه‌ی نصب‌شده → دانلود APK → نصب با FileProvider
+
+    // ==================== اشتراک ====================
+
+    /** متن و رنگ وضعیت اشتراک از روی کش prefs (با refreshLicenseSilently تازه می‌شود). */
+    fun licenseStatusText(): Pair<String, Int> {
+        if (prefs.getBoolean("lic_lifetime", false)) return "♾️ اشتراک دائمی" to WA_GREEN_DARK
+        val exp = prefs.getString("lic_expires", "") ?: ""
+        if (exp.isEmpty()) return "اشتراک: فعال (بدون تاریخ انقضا)" to WA_GREEN_DARK
+        val until = JalaliCalendar.formatFull(exp)
+        val days = prefs.getInt("lic_days", -999)
+        if (days == -999) return "اشتراک تا $until" to WA_GREEN_DARK
+        if (days < 0) return "⛔ اشتراک تمام شده است" to Color.RED
+        if (days == 0) return "⚠️ اشتراک امروز تمام می‌شود!" to Color.RED
+        if (days <= 3) return "⚠️ فقط $days روز مانده (تا $until)" to Color.RED
+        return "$days روز از اشتراک مانده (تا $until)" to WA_GREEN_DARK
+    }
+
+    /** تازه‌سازی بی‌صدای وضعیت اشتراک از /me؛ در خطا کش قبلی می‌ماند. */
+    fun refreshLicenseSilently(onDone: (() -> Unit)? = null) {
+        if (userId == 0 || apiToken.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val me = JSONObject(getAuth("me"))
+                prefs.edit()
+                    .putString("lic_expires", me.optString("license_expires", ""))
+                    .putBoolean("lic_lifetime", me.optBoolean("is_lifetime", false))
+                    .putInt("lic_days", if (me.has("days_left") && !me.isNull("days_left")) me.optInt("days_left") else -999)
+                    .putLong("lic_ts", System.currentTimeMillis())
+                    .apply()
+            } catch (_: Exception) { /* کش قبلی می‌ماند */ }
+            runOnUiThread { updateLicenseLabel(); onDone?.invoke() }
+        }
+    }
+
+    fun updateLicenseLabel() {
+        licenseLabel?.let {
+            val (t, c) = licenseStatusText()
+            it.text = t; it.setTextColor(c)
+            it.background = rounded(Color.parseColor(if (c == Color.RED) "#FDE2E2" else "#E8F5E9"), 12)
+        }
+    }
+
+    /** هشدار نزدیک انقضا؛ حداکثر روزی یک‌بار، و هرگز نباید اپ را خراب کند. */
+    fun maybeShowExpiryWarning() {
+        try {
+            if (prefs.getBoolean("lic_lifetime", false)) return
+            val days = prefs.getInt("lic_days", -999)
+            if (days == -999 || days > 3 || days < 0) return
+            val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            if (prefs.getString("lic_warn_date", "") == today) return
+            prefs.edit().putString("lic_warn_date", today).apply()
+            val until = JalaliCalendar.formatFull(prefs.getString("lic_expires", ""))
+            val msg = if (days == 0) "اشتراک شما امروز تمام می‌شود! برای تمدید با پشتیبانی در تماس باش."
+                else "فقط $days روز از اشتراک شما مانده (تا $until). برای تمدید با پشتیبانی در تماس باش."
+            AlertDialog.Builder(this).setTitle("⏳ اشتراک رو به پایان است").setMessage(msg).setPositiveButton("فهمیدم", null).show()
+        } catch (_: Exception) { /* هشدار نباید هیچ‌وقت اپ را خراب کند */ }
+    }
 
     fun currentVersionName(): String = try {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "0"

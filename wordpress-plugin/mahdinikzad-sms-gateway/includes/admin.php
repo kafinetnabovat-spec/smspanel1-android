@@ -22,6 +22,34 @@ function smsp1_handle_save_license() {
     exit;
 }
 
+// فعال‌سازی/تمدید اشتراک با یک کلیک. اگر کاربر اشتراک فعال داشته باشد، مدت جدید
+// به ادامه‌ی همان اضافه می‌شود (تمدید واقعی)؛ وگرنه از امروز حساب می‌شود.
+add_action('admin_post_smsp1_plan_set', 'smsp1_handle_plan_set');
+function smsp1_handle_plan_set() {
+    if (!current_user_can('manage_options')) wp_die('دسترسی ندارید');
+    check_admin_referer('smsp1_plan_set');
+    $user_id = (int) ($_POST['user_id'] ?? 0);
+    $plan = (string) ($_POST['plan'] ?? '');
+    $plans = ['7' => 7, '30' => 30, '90' => 90, '365' => 365];
+    if ($user_id > 0) {
+        if ($plan === 'lifetime') {
+            update_user_meta($user_id, SMSP1_LICENSE_ACTIVE_META, '1');
+            update_user_meta($user_id, SMSP1_LICENSE_EXPIRES_META, '');
+        } elseif (isset($plans[$plan])) {
+            $base = time();
+            $cur = trim((string) get_user_meta($user_id, SMSP1_LICENSE_EXPIRES_META, true));
+            if ($cur !== '') {
+                $t = strtotime($cur . ' 23:59:59');
+                if ($t !== false && $t > time()) $base = $t;
+            }
+            update_user_meta($user_id, SMSP1_LICENSE_ACTIVE_META, '1');
+            update_user_meta($user_id, SMSP1_LICENSE_EXPIRES_META, wp_date('Y-m-d', $base + $plans[$plan] * 86400));
+        }
+    }
+    wp_safe_redirect(admin_url('admin.php?page=smsp1-panel&tab=licenses&updated=1'));
+    exit;
+}
+
 add_action('admin_post_smsp1_group_add', function () {
     if (!current_user_can('manage_options')) wp_die('دسترسی ندارید');
     check_admin_referer('smsp1_group_add');
@@ -363,25 +391,60 @@ function smsp1_render_admin_page() {
 
 
         <?php if ($tab === 'licenses'): ?>
-            <?php foreach (get_users(['fields' => ['ID', 'user_login', 'display_name']]) as $u):
-                $active = get_user_meta($u->ID, SMSP1_LICENSE_ACTIVE_META, true) === '1';
-                $expires = get_user_meta($u->ID, SMSP1_LICENSE_EXPIRES_META, true);
+            <?php
+            // مرتب‌سازی: منقضی‌ها و روبه‌انقضاها اول، بعد سالم‌ها، بعد دائمی‌ها، آخر غیرفعال‌ها
+            $lic_users = [];
+            foreach (get_users(['fields' => ['ID', 'user_login', 'display_name']]) as $u) {
+                $lic_users[] = ['u' => $u, 'info' => smsp1_license_info($u->ID)];
+            }
+            usort($lic_users, function ($a, $b) {
+                $rank = function ($x) {
+                    if (!$x['info']['active']) return 100000;
+                    if ($x['info']['is_lifetime']) return 50000;
+                    return (int) $x['info']['days_left'];
+                };
+                return $rank($a) <=> $rank($b);
+            });
+            foreach ($lic_users as $lu):
+                $u = $lu['u']; $info = $lu['info'];
+                $active = $info['active']; $expires = $info['expires'];
                 $gc = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $gT WHERE user_id=%d", $u->ID));
                 $cc = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $cT WHERE user_id=%d", $u->ID));
                 $pen = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $qT WHERE user_id=%d AND status IN ('pending','sending')", $u->ID));
                 $tod = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $qT WHERE user_id=%d AND status='sent' AND DATE(updated_at)=CURDATE()", $u->ID));
+                if (!$active) $lic_badge = '<span class="smsp1-badge smsp1-bad">غیرفعال</span>';
+                elseif ($info['is_lifetime']) $lic_badge = '<span class="smsp1-badge smsp1-ok">♾️ دائمی</span>';
+                elseif ($info['days_left'] < 0) $lic_badge = '<span class="smsp1-badge smsp1-bad">منقضی شده</span>';
+                elseif ($info['days_left'] <= 3) $lic_badge = '<span class="smsp1-badge smsp1-warn">⚠️ ' . (int) $info['days_left'] . ' روز مانده</span>';
+                else $lic_badge = '<span class="smsp1-badge smsp1-ok">' . (int) $info['days_left'] . ' روز مانده</span>';
+                $lic_until = (!$active || $info['is_lifetime']) ? '' : ' <small style="color:#888">(تا ' . esc_html(smsp1_format_jalali($expires)) . ' — ' . esc_html($expires) . ')</small>';
             ?>
             <div class="smsp1-card">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                    <strong><?php echo esc_html($u->display_name ?: $u->user_login); ?></strong>
+                    <span><?php echo $lic_badge; ?><?php echo $lic_until; ?></span>
+                </div>
+                <p style="color:#666;font-size:13px">گروه‌ها: <?php echo $gc; ?> | مخاطبین: <?php echo $cc; ?> | در صف: <?php echo $pen; ?> | امروز: <?php echo $tod; ?></p>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-bottom:10px">
+                    <?php wp_nonce_field('smsp1_plan_set'); ?>
+                    <input type="hidden" name="action" value="smsp1_plan_set">
+                    <input type="hidden" name="user_id" value="<?php echo (int) $u->ID; ?>">
+                    <div class="smsp1-form">
+                        <span style="font-size:13px;font-weight:700">اشتراک:</span>
+                        <button class="button" name="plan" value="7" type="submit">۷ روزه</button>
+                        <button class="button" name="plan" value="30" type="submit">۳۰ روزه</button>
+                        <button class="button" name="plan" value="90" type="submit">۹۰ روزه</button>
+                        <button class="button" name="plan" value="365" type="submit">۱ ساله</button>
+                        <button class="button" name="plan" value="lifetime" type="submit">♾️ دائمی</button>
+                    </div>
+                    <small style="color:#888">فعال‌سازی/تمدید با یک کلیک — اگر اشتراک فعال داشته باشد به ادامه‌ی همان اضافه می‌شود، وگرنه از امروز.</small>
+                </form>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                     <?php wp_nonce_field('smsp1_save_license'); ?>
                     <input type="hidden" name="action" value="smsp1_save_license">
                     <input type="hidden" name="user_id" value="<?php echo (int) $u->ID; ?>">
-                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-                        <strong><?php echo esc_html($u->display_name ?: $u->user_login); ?></strong>
-                        <span class="smsp1-badge <?php echo $active ? 'smsp1-ok' : 'smsp1-bad'; ?>"><?php echo $active ? 'فعال' : 'غیرفعال'; ?></span>
-                    </div>
-                    <p style="color:#666;font-size:13px">گروه‌ها: <?php echo $gc; ?> | مخاطبین: <?php echo $cc; ?> | در صف: <?php echo $pen; ?> | امروز: <?php echo $tod; ?></p>
                     <div class="smsp1-form">
+                        <span style="font-size:13px;font-weight:700">دستی:</span>
                         <label><input type="checkbox" name="active" <?php checked($active); ?>> لایسنس فعال باشد</label>
                         <label>انقضا: <input type="date" name="expires" value="<?php echo esc_attr($expires); ?>"></label>
                         <button type="submit" class="button button-primary">ذخیره</button>
