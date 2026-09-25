@@ -35,6 +35,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -124,6 +126,7 @@ class MainActivity : AppCompatActivity() {
     var D: Float = 1f
     var activeGroupFilter: Int = -1
     var licenseLabel: TextView? = null // لیبل وضعیت اشتراک در تب تنظیمات (با تازه‌سازی بی‌صدا به‌روز می‌شود)
+    var contactsAdapter: ContactsAdapter? = null // آداپتر RecyclerView تب مخاطبین
 
     lateinit var prefs: android.content.SharedPreferences
     lateinit var root: LinearLayout
@@ -250,6 +253,7 @@ class MainActivity : AppCompatActivity() {
         groupsLoaded = false; contactsLoaded = false; campaignsLoaded = false; templatesLoaded = false
         activeGroupFilter = -1
         selectionMode = false; selectedContactIds.clear(); contactQuery = ""
+        contactsAdapter?.setItems(emptyList()); contactsAdapter = null
         phoneRows = ArrayList(); phoneSelected.clear(); phonePickerLoaded = false
         phoneQuery = ""; phonePage = 1; phoneTargetGroup = -1
         cacheOwnerUid = -1
@@ -655,7 +659,7 @@ class MainActivity : AppCompatActivity() {
         return if (Regex("^09\\d{9}$").matches(x)) x else null
     }
 
-    private fun groupNameOf(id: Int): String {
+    fun groupNameOf(id: Int): String {
         for (i in 0 until cacheGroups.length()) {
             try { val g = cacheGroups.getJSONObject(i); if (g.getInt("id") == id) return g.getString("name") } catch (_: Exception) {}
         }
@@ -1108,9 +1112,6 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(search)
 
-        val scroll = ScrollView(this)
-        scroll.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         // ---- نوار انتخاب (فقط در حالت حذف) ----
         val selBar = LinearLayout(this).apply {
@@ -1148,60 +1149,48 @@ class MainActivity : AppCompatActivity() {
             tvSelCount.text = "انتخاب‌شده: ${selectedContactIds.size} از ${visibleContacts().size}"
         }
 
-        fun renderList() {
-            list.removeAllViews()
-            val items = visibleContacts()
-            if (items.isEmpty()) {
-                list.addView(lbl(
-                    if (contactQuery.isEmpty()) "مخاطبی نیست — با دکمه‌های بالا اضافه کن" else "موردی پیدا نشد",
-                    13f, false, GRAY_500
-                ).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(30), dp(16), dp(16)) })
-                return
+        // لیست مخاطبین با RecyclerView: فقط ردیف‌های دیده‌شده ساخته می‌شوند.
+        // قبلاً همه‌ی مخاطب‌ها یکجا ساخته می‌شدند و باز شدن کیبورد ۲-۳ ثانیه فریز می‌کرد.
+        val recycler = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        val emptyLabel = lbl("", 13f, false, GRAY_500).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(30), dp(16), dp(16))
+            visibility = View.GONE
+        }
+        contactsAdapter = ContactsAdapter(this).apply {
+            selectionMode = this@MainActivity.selectionMode
+            onRowClick = { item, pos ->
+                if (this@MainActivity.selectionMode) {
+                    if (selectedContactIds.contains(item.id)) selectedContactIds.remove(item.id) else selectedContactIds.add(item.id)
+                    if (pos != RecyclerView.NO_POSITION) notifyItemChanged(pos)
+                    refreshSelectionBar()
+                } else showContactActions(item.id, item.name, item.mobile, item.groupId)
             }
-            for (c in items) {
-                val id = c.optInt("id", 0)
-                val nm = c.optString("name", "").ifEmpty { "بدون نام" }
-                val mb = c.optString("mobile", "")
-                val gid = c.optInt("group_id", -1)
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(12), dp(9), dp(12), dp(9))
-                }
-                if (selectionMode) {
-                    val cb = CheckBox(this).apply { isChecked = selectedContactIds.contains(id) }
-                    cb.setOnCheckedChangeListener { _, checked ->
-                        if (checked) selectedContactIds.add(id) else selectedContactIds.remove(id)
-                        refreshSelectionBar()
-                    }
-                    row.addView(cb)
-                } else {
-                    val av = TextView(this).apply {
-                        text = nm.take(1).uppercase()
-                        gravity = Gravity.CENTER; setTextColor(WHITE); textSize = 15f
-                        background = rounded(Color.parseColor("#128C7E"), 20)
-                        layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
-                    }
-                    row.addView(av)
-                }
-                val mid = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL; setPadding(dp(10), 0, 0, 0)
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                }
-                mid.addView(lbl(nm, 14f, true))
-                mid.addView(lbl(mb, 12f, false, GRAY_500))
-                row.addView(mid)
-                row.addView(lbl(groupNameOf(gid), 10f, false, GRAY_500).apply { setPadding(dp(6), 0, dp(4), 0) })
-                row.setOnClickListener {
-                    if (selectionMode) {
-                        if (selectedContactIds.contains(id)) selectedContactIds.remove(id) else selectedContactIds.add(id)
-                        showContactsTab()
-                    } else showContactActions(id, nm, mb, gid)
-                }
-                list.addView(row)
-                list.addView(View(this).apply {
-                    setBackgroundColor(Color.parseColor("#F1F1F1"))
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { setMargins(dp(56), 0, 0, 0) }
-                })
+            onChecked = { item, checked ->
+                if (checked) selectedContactIds.add(item.id) else selectedContactIds.remove(item.id)
+                refreshSelectionBar()
+            }
+        }
+        recycler.adapter = contactsAdapter
+
+        fun renderList() {
+            val items = visibleContacts()
+            contactsAdapter?.setItems(items.map { c ->
+                ContactsAdapter.Item(
+                    c.optInt("id", 0),
+                    c.optString("name", "").ifEmpty { "بدون نام" },
+                    c.optString("mobile", ""),
+                    c.optInt("group_id", -1)
+                )
+            })
+            if (items.isEmpty()) {
+                emptyLabel.text = if (contactQuery.isEmpty()) "مخاطبی نیست — با دکمه‌های بالا اضافه کن" else "موردی پیدا نشد"
+                emptyLabel.visibility = View.VISIBLE
+            } else {
+                emptyLabel.visibility = View.GONE
             }
             refreshSelectionBar()
         }
@@ -1210,7 +1199,8 @@ class MainActivity : AppCompatActivity() {
             val items = visibleContacts()
             if (items.isNotEmpty() && selectedContactIds.size >= items.size) selectedContactIds.clear()
             else for (c in items) selectedContactIds.add(c.optInt("id", 0))
-            showContactsTab()
+            contactsAdapter?.notifyDataSetChanged()
+            refreshSelectionBar()
         }
         btnDelSel.setOnClickListener { deleteContactsByIds(selectedContactIds.toList()) }
         btnDelAll.setOnClickListener { confirmDeleteAllInGroup(activeGroupFilter) }
@@ -1223,14 +1213,15 @@ class MainActivity : AppCompatActivity() {
             }
         } else renderList()
 
+        val searchDebounce = Runnable { contactQuery = search.text.toString(); renderList() }
         search.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) { contactQuery = s?.toString() ?: ""; renderList() }
+            override fun afterTextChanged(s: Editable?) { search.removeCallbacks(searchDebounce); search.postDelayed(searchDebounce, 300) }
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
 
-        scroll.addView(list)
-        container.addView(scroll)
+        container.addView(recycler)
+        container.addView(emptyLabel)
         if (selectionMode) container.addView(selBar)
         mainContent.addView(container)
     }
