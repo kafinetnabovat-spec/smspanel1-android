@@ -1,4 +1,22 @@
-package com.smspanel1.app.diagnostics
+// CrashReporter.kt — سیستم گزارش خودکار کرش و باگ اپ «کبوتر» (بدون کتابخانه‌ی خارجی)
+//
+// هر کرش (fatal) یا خطای دستی‌گرفته‌شده (non-fatal) را به اندپوینت
+// POST /wp-json/smsp1/v1/crash-report در افزونه‌ی وردپرس می‌فرستد؛
+// گزارش‌ها در پنل وردپرس ← «پنل پیامکی» ← تب «🐞 گزارش باگ‌ها» دیده می‌شوند.
+//
+// وصل شدن: کلاس SmsPanelApp (ثبت‌شده در AndroidManifest) در onCreate صدا می‌زند:
+//     CrashReporter.install(this)
+// آدرس سرور و توکن به‌صورت خودکار از SharedPreferences «smspanel1» خوانده می‌شوند
+// (همان‌جایی که MainActivity موقع لاگین می‌نویسد)؛ اگر کاربر لاگین نکرده باشد،
+// گزارش «ناشناس» ثبت می‌شود ولی باز هم ارسال می‌شود.
+//
+// برای خطاهایی که خودتان try/catch کرده‌اید:
+//     } catch (e: Exception) {
+//         CrashReporter.reportNonFatal(this@MainActivity, e, screen = "SendSheet")
+//         ...
+//     }
+
+package com.smspanel1.app
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -11,47 +29,12 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
 
-/**
- * CrashReporter — سیستم گزارش خودکار کرش و باگ برای اپ SmsPanel.
- * ------------------------------------------------------------------
- * چرا این فایل لازم بود: در تحلیل قبلی مشخص شد اپ هیچ سیستم گزارش کرش
- * (Crashlytics/Sentry/ACRA) ندارد، یعنی وقتی اپ می‌بندد هیچ لاگی جایی
- * ذخیره نمی‌شود که بشود بعداً بررسی کرد. این فایل همان جای خالی را پر
- * می‌کند: هر کرش (fatal) یا خطای دستی‌گرفته‌شده (non-fatal) را به
- * افزونه‌ی وردپرس (endpoint جدید /smsp1/v1/crash-report) می‌فرستد،
- * جایی که از منوی «گزارش باگ‌ها» می‌توانی ببینی‌شان و متن آماده‌ی هر کدام
- * را کپی/دانلود کنی و به هر توسعه‌دهنده‌ای (یا به من) بدهی.
- *
- * فقط همین یک فایل است، هیچ کتابخانه‌ی خارجی لازم ندارد (فقط org.json که
- * جزو خود اندروید است).
- *
- * نحوه‌ی استفاده (کافی‌ست یک‌بار، ترجیحاً در یک کلاس Application):
- *
- *   class SmsPanelApp : Application() {
- *       override fun onCreate() {
- *           super.onCreate()
- *           CrashReporter.install(this) { TokenStore.getToken(this) } // ← تابع خودتان برای خواندن api_token ذخیره‌شده
- *       }
- *   }
- *
- * اگر کلاس Application ندارید، همین دو خط را در ابتدای onCreate اولین
- * Activity (مثلاً MainActivity یا یک Splash) بگذارید؛ کار می‌کند ولی
- * کرش‌های خیلی زودهنگام (قبل از رسیدن به آن Activity) را نمی‌گیرد.
- *
- * برای خطاهایی که خودتان try/catch کرده‌اید ولی می‌خواهید در گزارش‌ها
- * ثبت شوند (بدون اینکه اپ کرش کند)، همه‌جا که صلاح می‌دانید صدا بزنید:
- *
- *   try {
- *       importCsv(uri)
- *   } catch (e: Exception) {
- *       CrashReporter.reportNonFatal(context, e, screen = "ImportCsv")
- *       showError(...)
- *   }
- */
 object CrashReporter {
 
-    // اگر دامنه‌ی سایت فرق دارد همین‌جا عوضش کنید
-    private const val ENDPOINT = "https://mahdinikzad.ir/wp-json/smsp1/v1/crash-report"
+    // باید با MainActivity.SITE_URL یکی باشد؛ اگر روزی پنل چنددامنه‌ای شد،
+    // مقدار ذخیره‌شده در prefs (کلید "site") بر این اولویت دارد.
+    private const val FALLBACK_SITE = "https://mahdinikzad.ir"
+    private const val PREFS_APP = "smspanel1"
     private const val PREFS = "smsp1_crash_reporter"
     private const val KEY_QUEUE = "queue"
     private const val MAX_QUEUE = 25 // بیشتر از این نگه نمی‌داریم که فضا/دیتای کاربر هدر نرود
@@ -59,20 +42,26 @@ object CrashReporter {
 
     private val executor = Executors.newSingleThreadExecutor()
     private var tokenProvider: (() -> String?)? = null
+    private var siteProvider: (() -> String?)? = null
     private var appContext: Context? = null
     private var installed = false
 
     /**
-     * یک‌بار در ابتدای عمر اپ صدا بزنید.
-     * getToken: تابعی که توکن ورود ذخیره‌شده (همان X-SMSP1-Token) را برمی‌گرداند؛
-     * اگر کاربر هنوز لاگین نکرده null برگردانید — گزارش باز هم می‌رود، فقط ناشناس ثبت می‌شود.
+     * یک‌بار در ابتدای عمر اپ صدا بزنید (الان در SmsPanelApp.onCreate).
+     * اگر getToken/getSite داده نشود، از prefs خود اپ خوانده می‌شود.
      */
     @Synchronized
-    fun install(context: Context, getToken: () -> String? = { null }) {
+    fun install(
+        context: Context,
+        getToken: (() -> String?)? = null,
+        getSite: (() -> String?)? = null
+    ) {
         if (installed) return
         installed = true
-        appContext = context.applicationContext
-        tokenProvider = getToken
+        val app = context.applicationContext
+        appContext = app
+        tokenProvider = getToken ?: { readAppPrefs(app).first }
+        siteProvider = getSite ?: { readAppPrefs(app).second }
 
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -105,7 +94,7 @@ object CrashReporter {
         flushQueueAsync()
     }
 
-    /** اسم صفحه/اکتیویتی فعلی، فقط برای اینکه در گزارش کرش معلوم باشد کاربر کجا بوده. اختیاری. */
+    /** اسم صفحه‌ی فعلی، فقط برای اینکه در گزارش کرش معلوم باشد کاربر کجا بوده. اختیاری. */
     @Volatile
     var currentScreenHint: String? = null
 
@@ -122,7 +111,7 @@ object CrashReporter {
                     screen = screen ?: currentScreenHint,
                     extra = extra
                 )
-                if (!sendReport(json)) queueLocally(ctx, json)
+                if (!sendReport(ctx, json)) queueLocally(ctx, json)
             } catch (inner: Throwable) {
                 Log.w(TAG, "failed to report non-fatal", inner)
             }
@@ -132,6 +121,26 @@ object CrashReporter {
     // ---------------------------------------------------------------
     // داخلی
     // ---------------------------------------------------------------
+
+    /** توکن و آدرس سایت ذخیره‌شده موقع لاگین (همان کلیدهایی که MainActivity می‌نویسد). */
+    private fun readAppPrefs(context: Context?): Pair<String?, String?> {
+        if (context == null) return null to null
+        return try {
+            val sp = context.getSharedPreferences(PREFS_APP, Context.MODE_PRIVATE)
+            val token = sp.getString("token", "")?.takeIf { it.isNotBlank() }
+            val site = sp.getString("site", "")?.takeIf { it.isNotBlank() } ?: FALLBACK_SITE
+            token to site
+        } catch (_: Exception) {
+            null to FALLBACK_SITE
+        }
+    }
+
+    private fun endpointUrl(context: Context?): String {
+        val site = (siteProvider?.invoke()?.takeIf { it.isNotBlank() }
+            ?: readAppPrefs(context).second
+            ?: FALLBACK_SITE).trimEnd('/')
+        return "$site/wp-json/smsp1/v1/crash-report"
+    }
 
     private fun buildReport(
         context: Context?,
@@ -154,16 +163,16 @@ object CrashReporter {
 
         return JSONObject().apply {
             put("exception_class", throwable.javaClass.name)
-            put("message", throwable.message ?: "")
-            put("stack_trace", stack)
+            put("message", (throwable.message ?: "").take(2000))
+            put("stack_trace", stack.take(20000))
             put("is_fatal", isFatal)
-            put("thread_name", threadName)
-            put("screen", screen ?: "")
+            put("thread_name", threadName.take(100))
+            put("screen", (screen ?: "").take(100))
             put("app_version", version)
             put("version_code", versionCode)
             put("android_version", Build.VERSION.RELEASE ?: "")
-            put("manufacturer", Build.MANUFACTURER ?: "")
-            put("model", Build.MODEL ?: "")
+            put("manufacturer", (Build.MANUFACTURER ?: "").take(60))
+            put("model", (Build.MODEL ?: "").take(100))
             if (extra != null && extra.isNotEmpty()) {
                 put("extra", JSONObject(extra as Map<*, *>))
             }
@@ -171,17 +180,20 @@ object CrashReporter {
     }
 
     /** true یعنی با موفقیت به سرور رسید. */
-    private fun sendReport(json: JSONObject): Boolean {
+    private fun sendReport(context: Context?, json: JSONObject): Boolean {
         return try {
-            val url = URL(ENDPOINT)
-            val conn = url.openConnection() as HttpURLConnection
+            val conn = URL(endpointUrl(context)).openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.connectTimeout = 8000
             conn.readTimeout = 8000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            tokenProvider?.invoke()?.let { token ->
-                if (token.isNotBlank()) conn.setRequestProperty("X-SMSP1-Token", token)
+            // توکن فقط در هدر (مثل Net.kt)؛ اگر هاست هدر را حذف کند، سرور گزارش را
+            // «ناشناس» ثبت می‌کند — بهتر از گم‌شدن گزارش است.
+            val token = tokenProvider?.invoke() ?: readAppPrefs(context).first
+            if (!token.isNullOrBlank()) {
+                conn.setRequestProperty("Authorization", "Bearer $token")
+                conn.setRequestProperty("X-SMSP1-Token", token)
             }
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(json.toString()) }
             val code = conn.responseCode
@@ -227,7 +239,7 @@ object CrashReporter {
             val remaining = JSONArray()
             for (i in 0 until arr.length()) {
                 val item = arr.getJSONObject(i)
-                if (!sendReport(item)) remaining.put(item)
+                if (!sendReport(ctx, item)) remaining.put(item)
             }
             sp.edit().putString(KEY_QUEUE, remaining.toString()).apply()
         }

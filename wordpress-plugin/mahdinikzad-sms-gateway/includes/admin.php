@@ -56,9 +56,40 @@ add_action('admin_post_smsp1_group_del', function () {
     exit;
 });
 
+add_action('admin_post_smsp1_bug_del', function () {
+    if (!current_user_can('manage_options')) wp_die('دسترسی ندارید');
+    check_admin_referer('smsp1_bug_del');
+    global $wpdb;
+    $id = (int) ($_POST['bug_id'] ?? 0);
+    if ($id > 0) $wpdb->delete(smsp1_table('crash_reports'), ['id' => $id]);
+    wp_safe_redirect(admin_url('admin.php?page=smsp1-panel&tab=bugs&updated=1'));
+    exit;
+});
+
+add_action('admin_post_smsp1_bug_clear', function () {
+    if (!current_user_can('manage_options')) wp_die('دسترسی ندارید');
+    check_admin_referer('smsp1_bug_clear');
+    global $wpdb;
+    $t = smsp1_table('crash_reports');
+    $wpdb->query("DELETE FROM $t");
+    wp_safe_redirect(admin_url('admin.php?page=smsp1-panel&tab=bugs&updated=1'));
+    exit;
+});
+
+add_action('admin_post_smsp1_bug_status', function () {
+    if (!current_user_can('manage_options')) wp_die('دسترسی ندارید');
+    check_admin_referer('smsp1_bug_status');
+    global $wpdb;
+    $id = (int) ($_POST['bug_id'] ?? 0);
+    $to = ($_POST['to'] ?? '') === 'fixed' ? 'fixed' : 'new';
+    if ($id > 0) $wpdb->update(smsp1_table('crash_reports'), ['status' => $to], ['id' => $id]);
+    wp_safe_redirect(admin_url('admin.php?page=smsp1-panel&tab=bugs&bug=' . $id . '&updated=1'));
+    exit;
+});
+
 function smsp1_admin_tab() {
     $t = $_GET['tab'] ?? 'dashboard';
-    return in_array($t, ['dashboard', 'groups', 'contacts', 'campaigns', 'licenses', 'release'], true) ? $t : 'dashboard';
+    return in_array($t, ['dashboard', 'groups', 'contacts', 'campaigns', 'bugs', 'licenses', 'release'], true) ? $t : 'dashboard';
 }
 
 function smsp1_render_admin_page() {
@@ -76,6 +107,9 @@ function smsp1_render_admin_page() {
     $sent_total = (int) $wpdb->get_var("SELECT COUNT(*) FROM $qT WHERE status='sent'");
     $failed_total = (int) $wpdb->get_var("SELECT COUNT(*) FROM $qT WHERE status='failed'");
     $ssl_ok = is_ssl();
+    $bugsT = smsp1_table('crash_reports');
+    $bugs_ok = ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $bugsT)) === $bugsT);
+    $new_bugs = $bugs_ok ? (int) $wpdb->get_var("SELECT COUNT(*) FROM $bugsT WHERE status='new'") : 0;
     ?>
     <style>
         .smsp1-wrap{max-width:1100px;margin:16px 0;font-family:Tahoma,Arial}
@@ -104,8 +138,9 @@ function smsp1_render_admin_page() {
         <h1>پنل پیامکی <small style="font-size:12px;color:#888">v<?php echo esc_html(SMSP1_VERSION); ?></small></h1>
         <?php if (!$ssl_ok): ?><div class="smsp1-alert" style="background:#fde2e2">هشدار: SSL فعال نیست — توکن فقط روی HTTPS امن است.</div><?php endif; ?>
         <?php if (!empty($_GET['updated'])): ?><div class="notice notice-success"><p>ذخیره شد.</p></div><?php endif; ?>
+        <?php if ($new_bugs > 0): ?><div class="smsp1-alert" style="background:#fef3cd">🐞 <?php echo (int) $new_bugs; ?> گزارش باگ بررسی‌نشده داری — <a href="<?php echo esc_url(admin_url('admin.php?page=smsp1-panel&tab=bugs')); ?>">مشاهده</a></div><?php endif; ?>
         <div class="smsp1-tabs">
-            <?php foreach (['dashboard' => 'داشبورد', 'groups' => 'گروه‌ها', 'contacts' => 'مخاطبین', 'campaigns' => 'کمپین‌ها و صف', 'licenses' => 'لایسنس‌ها', 'release' => '🚀 انتشار و به‌روزرسانی'] as $k => $l): ?>
+            <?php foreach (['dashboard' => 'داشبورد', 'groups' => 'گروه‌ها', 'contacts' => 'مخاطبین', 'campaigns' => 'کمپین‌ها و صف', 'bugs' => '🐞 گزارش باگ‌ها', 'licenses' => 'لایسنس‌ها', 'release' => '🚀 انتشار و به‌روزرسانی'] as $k => $l): ?>
                 <a class="<?php echo $tab === $k ? 'active' : ''; ?>" href="<?php echo esc_url(admin_url('admin.php?page=smsp1-panel&tab=' . $k)); ?>"><?php echo esc_html($l); ?></a>
             <?php endforeach; ?>
         </div>
@@ -199,6 +234,133 @@ function smsp1_render_admin_page() {
         <?php endif; ?>
 
         <?php if ($tab === 'release'): smsp1_render_release_tab(); endif; ?>
+        <?php if ($tab === 'bugs'): ?>
+            <?php if (!$bugs_ok): ?>
+                <div class="smsp1-card"><p>جدول گزارش‌ها هنوز ساخته نشده است. یک‌بار صفحه را رفرش کن — با باز شدن ادمین، جدول به‌صورت خودکار ساخته می‌شود.</p></div>
+            <?php else: ?>
+            <?php $bug_id = isset($_GET['bug']) ? (int) $_GET['bug'] : 0; ?>
+            <?php if ($bug_id > 0): ?>
+                <?php $bug = $wpdb->get_row($wpdb->prepare("SELECT b.*, u.display_name, u.user_login FROM $bugsT b LEFT JOIN $wpdb->users u ON u.ID=b.user_id WHERE b.id=%d", $bug_id), ARRAY_A); ?>
+                <?php if (!$bug): ?>
+                    <div class="smsp1-card"><p>گزارش یافت نشد.</p></div>
+                <?php else: ?>
+                <?php
+                $who = ((int) $bug['user_id'] > 0) ? (($bug['display_name'] ?: $bug['user_login'] ?: ('#' . $bug['user_id'])) . ' (#' . $bug['user_id'] . ')') : 'ناشناس';
+                $copy_text = "گزارش باگ کبوتر #" . $bug['id'] . " — " . ($bug['is_fatal'] ? 'کرش (اپ بسته شده)' : 'خطای غیرکشنده') . " [" . $bug['status'] . "]\n"
+                    . "زمان: " . $bug['created_at'] . "\n"
+                    . "کاربر: " . $who . "\n"
+                    . "اپ: " . $bug['app_version'] . " (کد " . $bug['version_code'] . ") | اندروید " . $bug['android_version'] . " | " . $bug['manufacturer'] . " " . $bug['model'] . "\n"
+                    . "صفحه: " . ($bug['screen'] ?: '—') . " | ترد: " . ($bug['thread_name'] ?: '—') . "\n"
+                    . "خطا: " . $bug['exception_class'] . ": " . $bug['message'] . "\n"
+                    . "---- stack trace ----\n" . $bug['stack_trace'] . "\n"
+                    . ($bug['extra'] ? "---- extra ----\n" . $bug['extra'] . "\n" : '');
+                ?>
+                <div class="smsp1-card">
+                    <p><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=smsp1-panel&tab=bugs')); ?>">→ بازگشت به فهرست</a></p>
+                    <h3>گزارش #<?php echo (int) $bug['id']; ?>
+                        <span class="smsp1-badge <?php echo $bug['is_fatal'] ? 'smsp1-bad' : 'smsp1-warn'; ?>"><?php echo $bug['is_fatal'] ? 'کرش 💥' : 'خطا ⚠️'; ?></span>
+                        <span class="smsp1-badge <?php echo $bug['status'] === 'fixed' ? 'smsp1-ok' : 'smsp1-info'; ?>"><?php echo $bug['status'] === 'fixed' ? 'بررسی‌شده' : 'جدید'; ?></span>
+                    </h3>
+                    <table class="smsp1-table">
+                        <tr><th style="width:140px">زمان</th><td dir="ltr" style="text-align:left"><?php echo esc_html($bug['created_at']); ?></td></tr>
+                        <tr><th>کاربر</th><td><?php echo esc_html($who); ?></td></tr>
+                        <tr><th>نسخه اپ</th><td dir="ltr" style="text-align:left"><?php echo esc_html($bug['app_version'] . ' (' . $bug['version_code'] . ')'); ?></td></tr>
+                        <tr><th>گوشی</th><td dir="ltr" style="text-align:left"><?php echo esc_html(trim($bug['manufacturer'] . ' ' . $bug['model']) . ' — اندروید ' . $bug['android_version']); ?></td></tr>
+                        <tr><th>صفحه / ترد</th><td dir="ltr" style="text-align:left"><?php echo esc_html(($bug['screen'] ?: '—') . ' / ' . ($bug['thread_name'] ?: '—')); ?></td></tr>
+                        <tr><th>خطا</th><td dir="ltr" style="text-align:left"><code><?php echo esc_html($bug['exception_class'] . ': ' . $bug['message']); ?></code></td></tr>
+                    </table>
+                    <h4>Stack trace</h4>
+                    <pre dir="ltr" style="text-align:left;background:#1e1e1e;color:#d4d4d4;padding:14px;border-radius:10px;max-height:380px;overflow:auto;font-size:12px;white-space:pre-wrap"><?php echo esc_html($bug['stack_trace'] ?: '(خالی)'); ?></pre>
+                    <?php if ($bug['extra']): ?><h4>اطلاعات اضافه</h4><pre dir="ltr" style="text-align:left;background:#f6f6f6;padding:12px;border-radius:10px;overflow:auto;font-size:12px"><?php echo esc_html($bug['extra']); ?></pre><?php endif; ?>
+                    <textarea id="smsp1-bug-copy" style="display:none"><?php echo esc_textarea($copy_text); ?></textarea>
+                    <div class="smsp1-form" style="margin-top:12px">
+                        <button type="button" class="button button-primary" onclick="smsp1CopyBug()">📋 کپی متن گزارش</button>
+                        <button type="button" class="button" onclick="smsp1DownloadBug(<?php echo (int) $bug['id']; ?>)">⬇ دانلود txt</button>
+                        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline">
+                            <?php wp_nonce_field('smsp1_bug_status'); ?>
+                            <input type="hidden" name="action" value="smsp1_bug_status">
+                            <input type="hidden" name="bug_id" value="<?php echo (int) $bug['id']; ?>">
+                            <input type="hidden" name="to" value="<?php echo $bug['status'] === 'fixed' ? 'new' : 'fixed'; ?>">
+                            <button class="button" type="submit"><?php echo $bug['status'] === 'fixed' ? '↩ برگردان به جدید' : '✅ علامت بررسی‌شده'; ?></button>
+                        </form>
+                        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline" onsubmit="return confirm('این گزارش حذف شود؟')">
+                            <?php wp_nonce_field('smsp1_bug_del'); ?>
+                            <input type="hidden" name="action" value="smsp1_bug_del">
+                            <input type="hidden" name="bug_id" value="<?php echo (int) $bug['id']; ?>">
+                            <button class="button button-link-delete" type="submit">حذف</button>
+                        </form>
+                    </div>
+                    <script>
+                    function smsp1CopyBug() {
+                        var t = document.getElementById('smsp1-bug-copy');
+                        t.style.display = 'block'; t.select();
+                        try { document.execCommand('copy'); alert('متن گزارش کپی شد — می‌توانی برای توسعه‌دهنده بفرستی.'); }
+                        catch (e) { alert('کپی نشد؛ متن را دستی انتخاب کن.'); }
+                        t.style.display = 'none';
+                    }
+                    function smsp1DownloadBug(id) {
+                        var t = document.getElementById('smsp1-bug-copy').value;
+                        var a = document.createElement('a');
+                        a.href = URL.createObjectURL(new Blob([t], {type: 'text/plain;charset=utf-8'}));
+                        a.download = 'bug-' + id + '.txt';
+                        document.body.appendChild(a); a.click();
+                        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+                    }
+                    </script>
+                </div>
+                <?php endif; ?>
+            <?php else: ?>
+                <?php
+                $filter = $_GET['filter'] ?? 'all';
+                if (!in_array($filter, ['all', 'fatal', 'new', 'fixed'], true)) $filter = 'all';
+                $total_bugs = (int) $wpdb->get_var("SELECT COUNT(*) FROM $bugsT");
+                $fatal_bugs = (int) $wpdb->get_var("SELECT COUNT(*) FROM $bugsT WHERE is_fatal=1");
+                $day_bugs = (int) $wpdb->get_var("SELECT COUNT(*) FROM $bugsT WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+                $where = '1=1';
+                if ($filter === 'fatal') $where = 'is_fatal=1';
+                elseif ($filter === 'new') $where = "status='new'";
+                elseif ($filter === 'fixed') $where = "status='fixed'";
+                $rows = $wpdb->get_results("SELECT b.id, b.user_id, b.is_fatal, b.exception_class, b.message, b.screen, b.app_version, b.model, b.status, b.created_at, u.display_name FROM $bugsT b LEFT JOIN $wpdb->users u ON u.ID=b.user_id WHERE $where ORDER BY b.id DESC LIMIT 100", ARRAY_A);
+                ?>
+                <div class="smsp1-grid">
+                    <div class="smsp1-stat"><b><?php echo number_format($new_bugs); ?></b><span>بررسی‌نشده</span></div>
+                    <div class="smsp1-stat"><b><?php echo number_format($fatal_bugs); ?></b><span>کرش (اپ بسته شده)</span></div>
+                    <div class="smsp1-stat"><b><?php echo number_format($day_bugs); ?></b><span>۲۴ ساعت اخیر</span></div>
+                    <div class="smsp1-stat"><b><?php echo number_format($total_bugs); ?></b><span>کل (آخرین ۵۰۰ نگه داشته می‌شود)</span></div>
+                </div>
+                <div class="smsp1-card">
+                    <div class="smsp1-form" style="margin-bottom:12px">
+                        <?php foreach (['all' => 'همه', 'new' => 'بررسی‌نشده', 'fatal' => 'فقط کرش‌ها', 'fixed' => 'بررسی‌شده'] as $fk => $fl): ?>
+                            <a class="button <?php echo $filter === $fk ? 'button-primary' : ''; ?>" href="<?php echo esc_url(admin_url('admin.php?page=smsp1-panel&tab=bugs&filter=' . $fk)); ?>"><?php echo esc_html($fl); ?></a>
+                        <?php endforeach; ?>
+                        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-right:auto" onsubmit="return confirm('همه‌ی گزارش‌ها پاک شوند؟')">
+                            <?php wp_nonce_field('smsp1_bug_clear'); ?>
+                            <input type="hidden" name="action" value="smsp1_bug_clear">
+                            <button class="button button-link-delete" type="submit">🗑 پاک‌سازی همه</button>
+                        </form>
+                    </div>
+                    <?php if (!$rows): ?><p style="color:#888">گزارشی نیست — اپ سالم است 🎉 (گزارش‌ها از نسخه 8.7.0 به بعد می‌آیند.)</p>
+                    <?php else: ?>
+                    <table class="smsp1-table"><tr><th>#</th><th>نوع</th><th>خطا</th><th>صفحه</th><th>کاربر</th><th>اپ</th><th>تاریخ</th></tr>
+                    <?php foreach ($rows as $r): ?>
+                        <tr>
+                            <td><a href="<?php echo esc_url(admin_url('admin.php?page=smsp1-panel&tab=bugs&bug=' . (int) $r['id'])); ?>"><b>#<?php echo (int) $r['id']; ?></b></a></td>
+                            <td><span class="smsp1-badge <?php echo $r['is_fatal'] ? 'smsp1-bad' : 'smsp1-warn'; ?>"><?php echo $r['is_fatal'] ? 'کرش' : 'خطا'; ?></span>
+                                <?php if ($r['status'] === 'fixed'): ?><span class="smsp1-badge smsp1-ok">✓</span><?php endif; ?></td>
+                            <td dir="ltr" style="text-align:left"><small><?php echo esc_html(mb_substr(($r['exception_class'] ?: '') . ': ' . ($r['message'] ?: ''), 0, 90)); ?></small></td>
+                            <td><small><?php echo esc_html($r['screen'] ?: '—'); ?></small></td>
+                            <td><small><?php echo $r['user_id'] ? esc_html(($r['display_name'] ?: ('#' . $r['user_id']))) : '<span style="color:#999">ناشناس</span>'; ?></small></td>
+                            <td dir="ltr" style="text-align:left"><small><?php echo esc_html($r['app_version'] ?: '—'); ?></small></td>
+                            <td><small><?php echo esc_html($r['created_at']); ?></small></td>
+                        </tr>
+                    <?php endforeach; ?></table>
+                    <p style="color:#888;font-size:12px">نمایش ۱۰۰ مورد آخر — برای جزئیات، stack trace و کپی متن آماده، روی شماره کلیک کن.</p>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+            <?php endif; ?>
+        <?php endif; ?>
+
 
         <?php if ($tab === 'licenses'): ?>
             <?php foreach (get_users(['fields' => ['ID', 'user_login', 'display_name']]) as $u):

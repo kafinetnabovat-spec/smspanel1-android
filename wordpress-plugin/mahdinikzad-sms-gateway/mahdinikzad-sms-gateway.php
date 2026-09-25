@@ -3,7 +3,7 @@
  * Plugin Name: MahdiNikzad SMS Gateway
  * Plugin URI: https://mahdinikzad.ir
  * Description: بک‌اند اپ SmsPanel — مدیریت لایسنس کاربران، گروه‌بندی، مخاطبین و صف ارسال پیامک.
- * Version: 4.6.0
+ * Version: 4.7.0
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: Mahdi Nikzad
@@ -15,7 +15,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SMSP1_VERSION', '4.6.0');
+define('SMSP1_VERSION', '4.7.0');
 define('SMSP1_SLUG', 'mahdinikzad-sms-gateway/mahdinikzad-sms-gateway.php');
 define('SMSP1_LICENSE_ACTIVE_META', '_smsp1_license_active');
 define('SMSP1_LICENSE_EXPIRES_META', '_smsp1_license_expires');
@@ -112,10 +112,45 @@ function smsp1_activate() {
         PRIMARY KEY (id),
         KEY user_id (user_id)
     ) $charset;");
+
+    // گزارش‌های کرش/خطای اپ (تب «گزارش باگ‌ها» در پنل). user_id=0 یعنی گزارش ناشناس
+    // (کاربر لاگین نکرده یا توکن به هر دلیلی خوانده نشده — گزارش گم نمی‌شود).
+    dbDelta("CREATE TABLE " . smsp1_table('crash_reports') . " (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        is_fatal TINYINT(1) NOT NULL DEFAULT 0,
+        exception_class VARCHAR(190) NOT NULL DEFAULT '',
+        message VARCHAR(500) NOT NULL DEFAULT '',
+        stack_trace MEDIUMTEXT,
+        thread_name VARCHAR(100) NOT NULL DEFAULT '',
+        screen VARCHAR(100) NOT NULL DEFAULT '',
+        app_version VARCHAR(20) NOT NULL DEFAULT '',
+        version_code INT NOT NULL DEFAULT 0,
+        android_version VARCHAR(20) NOT NULL DEFAULT '',
+        manufacturer VARCHAR(60) NOT NULL DEFAULT '',
+        model VARCHAR(100) NOT NULL DEFAULT '',
+        extra TEXT,
+        status VARCHAR(20) NOT NULL DEFAULT 'new',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY user_id (user_id),
+        KEY status (status)
+    ) $charset;");
+
+    update_option('smsp1_db_version', SMSP1_VERSION);
 }
 
+// وقتی افزونه «آپدیت» می‌شود (نه نصب تازه)، هوک activation اجرا نمی‌شود و جدول
+// جدید ساخته نمی‌شد. پس با هر بارگذاری ادمین، اگر نسخه‌ی دیتابیس قدیمی بود،
+// جدول‌ها را می‌سازیم. dbDelta برای جدول‌های موجود بی‌ضرر است.
+add_action('admin_init', function () {
+    if (get_option('smsp1_db_version') !== SMSP1_VERSION) {
+        smsp1_activate();
+    }
+});
+
 // ---------- auth ----------
-function smsp1_token_user_id(WP_REST_Request $req) {
+function smsp1_token_user_id(WP_REST_Request $req, $check_license = true) {
     // 1) standard header (may be stripped by some shared hosts)
     $token = '';
     $header = $req->get_header('Authorization');
@@ -129,11 +164,13 @@ function smsp1_token_user_id(WP_REST_Request $req) {
     $users = get_users(['meta_key' => SMSP1_TOKEN_META, 'meta_value' => $token, 'fields' => ['ID']]);
     if (empty($users)) return 0;
     $uid = (int) $users[0]->ID;
-    // license check
-    $active = get_user_meta($uid, SMSP1_LICENSE_ACTIVE_META, true) === '1';
-    if (!$active) return 0;
-    $exp = get_user_meta($uid, SMSP1_LICENSE_EXPIRES_META, true);
-    if ($exp && strtotime($exp) < time()) return 0;
+    // license check (برای گزارش کرش رد می‌شود تا حتی با لایسنس منقضی هم معلوم باشد کدام کاربر کرش کرده)
+    if ($check_license) {
+        $active = get_user_meta($uid, SMSP1_LICENSE_ACTIVE_META, true) === '1';
+        if (!$active) return 0;
+        $exp = get_user_meta($uid, SMSP1_LICENSE_EXPIRES_META, true);
+        if ($exp && strtotime($exp) < time()) return 0;
+    }
     return $uid;
 }
 
@@ -455,6 +492,48 @@ add_action('rest_api_init', function () {
             }
             return ['ok' => true];
         }),
+    ]);
+
+    // دریافت گزارش کرش/خطا از اپ. عمومی است تا گزارش هیچ‌وقت گم نشود؛ اگر توکن
+    // معتبر همراه باشد user_id هم ثبت می‌شود (حتی با لایسنس منقضی)، وگرنه ناشناس.
+    register_rest_route($ns, '/crash-report', [
+        'methods' => 'POST',
+        'permission_callback' => '__return_true',
+        'callback' => function (WP_REST_Request $req) {
+            global $wpdb;
+            $uid = smsp1_token_user_id($req, false);
+            $body = $req->get_json_params();
+            if (!is_array($body)) $body = [];
+            $str = function ($v, $len) { return mb_substr(trim((string) $v), 0, (int) $len); };
+            $extra = '';
+            if (isset($body['extra'])) {
+                $extra = is_string($body['extra']) ? $body['extra'] : wp_json_encode($body['extra']);
+                $extra = mb_substr((string) $extra, 0, 2000);
+            }
+            $ok = $wpdb->insert(smsp1_table('crash_reports'), [
+                'user_id'         => (int) $uid,
+                'is_fatal'        => !empty($body['is_fatal']) ? 1 : 0,
+                'exception_class' => $str($body['exception_class'] ?? '', 190),
+                'message'         => $str($body['message'] ?? '', 500),
+                'stack_trace'     => mb_substr((string) ($body['stack_trace'] ?? ''), 0, 20000),
+                'thread_name'     => $str($body['thread_name'] ?? '', 100),
+                'screen'          => $str($body['screen'] ?? '', 100),
+                'app_version'     => $str($body['app_version'] ?? '', 20),
+                'version_code'    => (int) ($body['version_code'] ?? 0),
+                'android_version' => $str($body['android_version'] ?? '', 20),
+                'manufacturer'    => $str($body['manufacturer'] ?? '', 60),
+                'model'           => $str($body['model'] ?? '', 100),
+                'extra'           => $extra,
+                'status'          => 'new',
+            ]);
+            if (!$ok) return new WP_Error('db', 'ثبت نشد', ['status' => 500]);
+            $new_id = (int) $wpdb->insert_id;
+            // هرس: فقط ۵۰۰ گزارش آخر نگه داشته می‌شود تا جدول بی‌نهایت بزرگ نشود
+            $t = smsp1_table('crash_reports');
+            $max = (int) $wpdb->get_var("SELECT MAX(id) FROM $t");
+            if ($max > 500) $wpdb->query($wpdb->prepare("DELETE FROM $t WHERE id <= %d", $max - 500));
+            return ['ok' => true, 'id' => $new_id];
+        },
     ]);
 });
 

@@ -314,6 +314,7 @@ class MainActivity : AppCompatActivity() {
     // ==================== LOGIN ====================
 
     fun showLogin() {
+        CrashReporter.currentScreenHint = "Login"
         root.removeAllViews()
         val scroll = ScrollView(this)
         val container = LinearLayout(this).apply {
@@ -377,6 +378,7 @@ class MainActivity : AppCompatActivity() {
                     prefs.edit().putString("site", siteUrl).putString("username", u).putInt("uid", userId).putString("token", apiToken).apply()
                     runOnUiThread { showMain() }
                 } catch (e: Exception) {
+                    CrashReporter.reportNonFatal(this@MainActivity, e, screen = "Login")
                     runOnUiThread { msg.text = "خطا: ${e.message?.take(150)}"; msg.setTextColor(Color.RED) }
                 }
             }
@@ -389,6 +391,7 @@ class MainActivity : AppCompatActivity() {
     // ==================== MAIN SHELL ====================
 
     fun showMain() {
+        CrashReporter.currentScreenHint = "Main"
         ensureCacheOwner()    // هیچ‌وقت داده‌ی حساب قبلی رندر نمی‌شود
         sheetBodyRef = null   // با برگشت به خانه، پیش‌نویس پاک می‌شود
         root.removeAllViews()
@@ -1721,6 +1724,7 @@ class MainActivity : AppCompatActivity() {
                         startSendService()
                     }
                 } catch (e: Exception) {
+                    CrashReporter.reportNonFatal(this@MainActivity, e, screen = "SendSheet")
                     runOnUiThread {
                         tvResult.text = "خطا: ${e.message?.take(100)}"
                         tvResult.setTextColor(Color.RED)
@@ -1796,7 +1800,10 @@ class MainActivity : AppCompatActivity() {
                 if (tourActive || onboardingOverlay != null) return@launch
                 runOnUiThread { showUpdateDialog(remote, local, apkUrl, changelog, size, force) }
             } catch (e: Exception) {
-                if (!silent) runOnUiThread { toast("خطا در بررسی به‌روزرسانی: ${e.message?.take(80)}") }
+                if (!silent) {
+                    CrashReporter.reportNonFatal(this@MainActivity, e, screen = "UpdateCheck")
+                    runOnUiThread { toast("خطا در بررسی به‌روزرسانی: ${e.message?.take(80)}") }
+                }
             }
         }
     }
@@ -1866,6 +1873,7 @@ class MainActivity : AppCompatActivity() {
                     installApk(out)
                 }
             } catch (e: Exception) {
+                CrashReporter.reportNonFatal(this@MainActivity, e, screen = "Updater")
                 runOnUiThread {
                     try { progress.dismiss() } catch (_: Exception) {}
                     toast("دانلود ناموفق: ${e.message?.take(90)}\nمی‌توانی دستی از گیت‌هاب دانلود کنی")
